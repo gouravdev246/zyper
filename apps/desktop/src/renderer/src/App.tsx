@@ -156,6 +156,40 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleConnectCalendar = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/connections/google_calendar/auth-url`);
+      const data = await res.json();
+      if (data.success && data.data?.authUrl) {
+        window.open(data.data.authUrl, '_blank');
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleDisconnectCalendar = async () => {
+    try {
+      await fetch(`${API_BASE}/connections/google_calendar/disconnect`, { method: 'POST' });
+      await fetchConnections();
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleToggleCalendarMock = async (connected: boolean) => {
+    try {
+      await fetch(`${API_BASE}/connections/google_calendar/mock-toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connected }),
+      });
+      await fetchConnections();
+    } catch {
+      // fallback
+    }
+  };
+
   const fetchTools = async () => {
     try {
       const res = await fetch(`${API_BASE}/tools`);
@@ -951,40 +985,99 @@ export const App: React.FC = () => {
               })()}
 
               {/* Google Calendar Card */}
-              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                        <Calendar className="w-5 h-5" />
+              {(() => {
+                const calConn = connections.find((c) => c.provider === 'google_calendar');
+                const isConnected = calConn?.status === 'CONNECTED';
+
+                return (
+                  <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                            <Calendar className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-base font-semibold text-white">Google Calendar</h4>
+                            <span className="text-[11px] text-slate-400">Official Calendar API</span>
+                          </div>
+                        </div>
+
+                        <span
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
+                            isConnected
+                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                              : 'bg-slate-800 text-slate-400 border border-white/5'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                          {isConnected ? 'Connected' : 'Disconnected'}
+                        </span>
                       </div>
-                      <div>
-                        <h4 className="text-base font-semibold text-white">Google Calendar</h4>
-                        <span className="text-[11px] text-slate-400">Official Calendar API</span>
+
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Inspect calendar schedules, prepare daily briefings, check meeting conflicts, and book draft events.
+                      </p>
+
+                      <div className="pt-2">
+                        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Authorized Scopes:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(calConn?.scopes || ['calendar.readonly', 'calendar.events']).map((s) => (
+                            <span key={s} className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
                       </div>
+
+                      {calConn?.lastSyncAt && (
+                        <div className="text-[11px] text-slate-500">
+                          Last synchronized: <span className="font-mono text-slate-400">{new Date(calConn.lastSyncAt).toLocaleString()}</span>
+                        </div>
+                      )}
                     </div>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-white/5 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                      Disconnected
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Inspect calendar schedules, prepare daily briefings, check meeting conflicts, and book draft events.
-                  </p>
-                  <div className="pt-2">
-                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Scopes:</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">calendar.readonly</span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">calendar.events</span>
+
+                    <div className="pt-4 border-t border-white/5 flex flex-wrap gap-2">
+                      {isConnected ? (
+                        <>
+                          <button
+                            onClick={handleDisconnectCalendar}
+                            className="px-3.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-semibold transition-colors"
+                          >
+                            Disconnect
+                          </button>
+                          <button
+                            onClick={() => {
+                              setInputPrompt('Please list my upcoming calendar events for the next 7 days and check for any meeting conflicts.');
+                              setActiveTab('chat');
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm shadow-blue-600/30"
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            Review Schedule in Chat
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={handleConnectCalendar}
+                            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-md shadow-blue-600/30"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Authorize with Google
+                          </button>
+                          <button
+                            onClick={() => handleToggleCalendarMock(true)}
+                            className="px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition-colors"
+                          >
+                            Simulate Connected
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
-                </div>
-                <div className="pt-4 border-t border-white/5">
-                  <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
-                    Configure Google Calendar (Phase 5)
-                  </button>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* X / Twitter Card */}
               <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">

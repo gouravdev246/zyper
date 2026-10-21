@@ -1,11 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { gmailService } from '../services/gmail.service.js';
+import { calendarService } from '../services/calendar.service.js';
 
 export const connectionsRouter = Router();
 
 // GET /api/v1/connections - list integrations with live provider statuses
 connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
-  const gmailStatus = await gmailService.getConnectionStatus();
+  const [gmailStatus, calendarStatus] = await Promise.all([
+    gmailService.getConnectionStatus(),
+    calendarService.getConnectionStatus(),
+  ]);
 
   res.json({
     success: true,
@@ -21,8 +25,9 @@ connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
       {
         provider: 'google_calendar',
         name: 'Google Calendar',
-        status: 'DISCONNECTED',
-        scopes: ['calendar.readonly', 'calendar.events'],
+        status: calendarStatus.connected ? 'CONNECTED' : 'DISCONNECTED',
+        scopes: calendarStatus.scopes,
+        lastSyncAt: calendarStatus.lastSyncAt,
         description: 'Schedule briefings, inspect calendar conflicts, and prepare agenda reminders.',
       },
       {
@@ -43,7 +48,11 @@ connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
   });
 });
 
-// GET /api/v1/connections/gmail/auth-url - generate OAuth2 authorization URL
+// ==========================================
+// Gmail OAuth Routes
+// ==========================================
+
+// GET /api/v1/connections/gmail/auth-url
 connectionsRouter.get('/connections/gmail/auth-url', (req: Request, res: Response) => {
   const redirectUri = req.query.redirectUri as string | undefined;
   const authUrl = gmailService.getAuthUrl(redirectUri);
@@ -57,7 +66,7 @@ connectionsRouter.get('/connections/gmail/auth-url', (req: Request, res: Respons
   });
 });
 
-// POST /api/v1/connections/gmail/callback - exchange auth code for tokens
+// POST /api/v1/connections/gmail/callback
 connectionsRouter.post('/connections/gmail/callback', async (req: Request, res: Response) => {
   try {
     const { code, redirectUri } = req.body;
@@ -107,7 +116,7 @@ connectionsRouter.get('/connections/gmail/callback', async (req: Request, res: R
   }
 });
 
-// POST /api/v1/connections/gmail/disconnect - revoke Gmail credentials
+// POST /api/v1/connections/gmail/disconnect
 connectionsRouter.post('/connections/gmail/disconnect', async (_req: Request, res: Response) => {
   await gmailService.disconnect();
   res.json({
@@ -120,7 +129,7 @@ connectionsRouter.post('/connections/gmail/disconnect', async (_req: Request, re
   });
 });
 
-// POST /api/v1/connections/gmail/mock-toggle - helper for dev / test simulation
+// POST /api/v1/connections/gmail/mock-toggle
 connectionsRouter.post('/connections/gmail/mock-toggle', (req: Request, res: Response) => {
   const { connected } = req.body;
   gmailService.setMockConnected(Boolean(connected));
@@ -133,11 +142,107 @@ connectionsRouter.post('/connections/gmail/mock-toggle', (req: Request, res: Res
   });
 });
 
+// ==========================================
+// Google Calendar OAuth Routes
+// ==========================================
+
+// GET /api/v1/connections/google_calendar/auth-url
+connectionsRouter.get('/connections/google_calendar/auth-url', (req: Request, res: Response) => {
+  const redirectUri = req.query.redirectUri as string | undefined;
+  const authUrl = calendarService.getAuthUrl(redirectUri);
+
+  res.json({
+    success: true,
+    data: {
+      provider: 'google_calendar',
+      authUrl,
+    },
+  });
+});
+
+// POST /api/v1/connections/google_calendar/callback
+connectionsRouter.post('/connections/google_calendar/callback', async (req: Request, res: Response) => {
+  try {
+    const { code, redirectUri } = req.body;
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_INPUT', message: 'Authorization code is required' },
+      });
+    }
+
+    const result = await calendarService.handleCallback(code, redirectUri);
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown OAuth error';
+    return res.status(500).json({
+      success: false,
+      error: { code: 'OAUTH_EXCHANGE_FAILED', message: msg },
+    });
+  }
+});
+
+// GET /api/v1/connections/google_calendar/callback - support browser OAuth redirects
+connectionsRouter.get('/connections/google_calendar/callback', async (req: Request, res: Response) => {
+  try {
+    const code = req.query.code as string;
+    if (!code) {
+      return res.status(400).send('Authorization code missing');
+    }
+
+    await calendarService.handleCallback(code);
+    return res.send(`
+      <html>
+        <body style="background:#0b0f17;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
+          <div style="text-align:center;padding:32px;background:#131b2e;border-radius:12px;border:1px solid rgba(255,255,255,0.1);">
+            <h2 style="color:#60a5fa;">Google Calendar Connected Successfully</h2>
+            <p style="color:#94a3b8;">You may close this window and return to the Zyper Desktop application.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown OAuth error';
+    return res.status(500).send(`OAuth Error: ${msg}`);
+  }
+});
+
+// POST /api/v1/connections/google_calendar/disconnect
+connectionsRouter.post('/connections/google_calendar/disconnect', async (_req: Request, res: Response) => {
+  await calendarService.disconnect();
+  res.json({
+    success: true,
+    data: {
+      provider: 'google_calendar',
+      status: 'DISCONNECTED',
+      revokedAt: new Date().toISOString(),
+    },
+  });
+});
+
+// POST /api/v1/connections/google_calendar/mock-toggle
+connectionsRouter.post('/connections/google_calendar/mock-toggle', (req: Request, res: Response) => {
+  const { connected } = req.body;
+  calendarService.setMockConnected(Boolean(connected));
+  res.json({
+    success: true,
+    data: {
+      provider: 'google_calendar',
+      connected: Boolean(connected),
+    },
+  });
+});
+
 // DELETE /api/v1/connections/:provider - generic revoke endpoint
 connectionsRouter.delete('/connections/:provider', async (req: Request, res: Response) => {
   const { provider } = req.params;
   if (provider === 'gmail') {
     await gmailService.disconnect();
+  } else if (provider === 'google_calendar') {
+    await calendarService.disconnect();
   }
 
   res.json({

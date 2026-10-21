@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ToolCategory, ToolContract } from '@zyper/shared';
 import { gmailService } from '../services/gmail.service.js';
+import { calendarService } from '../services/calendar.service.js';
 
 export interface ExecutableTool {
   contract: ToolContract;
@@ -69,33 +70,103 @@ class ToolRegistry {
         version: '1.0.0',
         category: ToolCategory.READ_ONLY,
         requiredScopes: ['calendar:read'],
-        inputSchema: { daysAhead: 'number (optional)' },
-        outputSchema: { events: 'Array<{ id, summary, start, end }>' },
+        inputSchema: { daysAhead: 'number (optional)', maxResults: 'number (optional)' },
+        outputSchema: { totalEvents: 'number', events: 'Array<{ id, summary, start, end, location, status }>' },
         requiresApprovalByDefault: false,
         timeoutMs: 5000,
       },
       inputValidator: z.object({
         daysAhead: z.number().int().min(1).max(30).default(7),
+        maxResults: z.number().int().min(1).max(50).default(10),
       }),
-      execute: async ({ daysAhead }) => {
-        const now = new Date();
-        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      execute: async ({ daysAhead, maxResults }) => {
+        const events = await calendarService.listEvents(daysAhead, maxResults);
         return {
-          daysAhead,
-          events: [
-            {
-              id: 'evt-101',
-              summary: 'Architecture Planning & Design Sync',
-              start: now.toISOString(),
-              end: new Date(now.getTime() + 3600 * 1000).toISOString(),
-            },
-            {
-              id: 'evt-102',
-              summary: 'Daily Operator Briefing',
-              start: tomorrow.toISOString(),
-              end: new Date(tomorrow.getTime() + 1800 * 1000).toISOString(),
-            },
-          ],
+          totalEvents: events.length,
+          events,
+        };
+      },
+    });
+
+    // 3. calendar.check_conflicts (READ_ONLY)
+    this.register({
+      contract: {
+        id: 'calendar.check_conflicts',
+        name: 'Check Calendar Conflicts',
+        description: 'Verify if a proposed meeting slot conflicts with any existing scheduled events.',
+        version: '1.0.0',
+        category: ToolCategory.READ_ONLY,
+        requiredScopes: ['calendar:read'],
+        inputSchema: { start: 'string (ISO datetime)', end: 'string (ISO datetime)' },
+        outputSchema: { hasConflict: 'boolean', conflictingEvents: 'Array<{ id, summary, start, end }>' },
+        requiresApprovalByDefault: false,
+        timeoutMs: 5000,
+      },
+      inputValidator: z.object({
+        start: z.string().min(1, 'Start time is required'),
+        end: z.string().min(1, 'End time is required'),
+      }),
+      execute: async ({ start, end }) => {
+        const result = await calendarService.checkConflicts(start, end);
+        return {
+          hasConflict: result.hasConflict,
+          conflictingEvents: result.conflictingEvents,
+        };
+      },
+    });
+
+    // 4. calendar.create_event (CONSEQUENTIAL - requires approval)
+    this.register({
+      contract: {
+        id: 'calendar.create_event',
+        name: 'Create Calendar Event',
+        description: 'Schedule a new calendar event and notify attendees. Requires explicit authorization.',
+        version: '1.0.0',
+        category: ToolCategory.CONSEQUENTIAL,
+        requiredScopes: ['calendar:events'],
+        inputSchema: {
+          summary: 'string',
+          start: 'string (ISO datetime)',
+          end: 'string (ISO datetime)',
+          description: 'string (optional)',
+          location: 'string (optional)',
+          attendees: 'Array<string> (optional)',
+        },
+        outputSchema: {
+          id: 'string',
+          summary: 'string',
+          start: 'string',
+          end: 'string',
+          status: 'string',
+        },
+        requiresApprovalByDefault: true,
+        timeoutMs: 10000,
+      },
+      inputValidator: z.object({
+        summary: z.string().min(1, 'Event summary is required'),
+        start: z.string().min(1, 'Start datetime is required'),
+        end: z.string().min(1, 'End datetime is required'),
+        description: z.string().optional(),
+        location: z.string().optional(),
+        attendees: z.array(z.string()).optional(),
+      }),
+      execute: async ({ summary, start, end, description, location, attendees }) => {
+        const created = await calendarService.createEvent({
+          summary,
+          start,
+          end,
+          description,
+          location,
+          attendees,
+        });
+        return {
+          id: created.id,
+          summary: created.summary,
+          start: created.start,
+          end: created.end,
+          location: created.location,
+          status: created.status,
+          createdAt: new Date().toISOString(),
         };
       },
     });
