@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { toolRegistry } from '../tools/registry.js';
 import { policyService } from './policy.service.js';
-import { ToolExecutionRequest, ToolExecutionResult, AuditEventType } from '@zyper/shared';
+import { ToolExecutionRequest, ToolExecutionResult, AuditEventType, ToolCategory } from '@zyper/shared';
 import { logger } from '../lib/logger.js';
 
 interface ExecRecord {
@@ -17,6 +17,10 @@ const memoryExecutions = new Map<string, ExecRecord>();
 const memoryAuditEvents: Array<Record<string, unknown>> = [];
 
 export class ToolExecutionService {
+  clearCache(): void {
+    memoryExecutions.clear();
+  }
+
   async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
     const startTime = Date.now();
     const { toolId, input, runId, taskId, approvalId } = request;
@@ -29,17 +33,19 @@ export class ToolExecutionService {
         .update(JSON.stringify({ toolId, input, runId, taskId }))
         .digest('hex');
 
-    // 1. Check idempotency: If this exact side-effect was already executed, return cached result
-    const cached = memoryExecutions.get(idempotencyKey);
-    if (cached) {
-      logger.info(`Idempotent hit for key ${idempotencyKey}, returning cached output.`);
-      return {
-        toolId,
-        status: 'SUCCESS',
-        output: cached.result,
-        durationMs: 0,
-        executedAt: cached.executedAt,
-      };
+    // 1. Check idempotency: If this exact side-effect was already executed and has an explicit key, return cached result
+    if (request.idempotencyKey) {
+      const cached = memoryExecutions.get(idempotencyKey);
+      if (cached) {
+        logger.info(`Idempotent hit for key ${idempotencyKey}, returning cached output.`);
+        return {
+          toolId,
+          status: 'SUCCESS',
+          output: cached.result,
+          durationMs: 0,
+          executedAt: cached.executedAt,
+        };
+      }
     }
 
     // 2. Validate tool registration
@@ -137,13 +143,15 @@ export class ToolExecutionService {
       const executedAt = new Date().toISOString();
       const durationMs = Date.now() - startTime;
 
-      // Cache execution for idempotency
-      memoryExecutions.set(idempotencyKey, {
-        idempotencyKey,
-        result: output,
-        status: 'SUCCESS',
-        executedAt,
-      });
+      // Cache execution for idempotency (mutations or explicit idempotency key)
+      if (request.idempotencyKey || tool.contract.category !== ToolCategory.READ_ONLY) {
+        memoryExecutions.set(idempotencyKey, {
+          idempotencyKey,
+          result: output,
+          status: 'SUCCESS',
+          executedAt,
+        });
+      }
 
       // Record audit event
       await this.recordAudit(

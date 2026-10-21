@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ToolCategory, ToolContract } from '@zyper/shared';
+import { gmailService } from '../services/gmail.service.js';
 
 export interface ExecutableTool {
   contract: ToolContract;
@@ -109,7 +110,7 @@ class ToolRegistry {
         category: ToolCategory.READ_ONLY,
         requiredScopes: ['gmail:read'],
         inputSchema: { maxResults: 'number (optional)' },
-        outputSchema: { messages: 'Array<{ id, from, subject, snippet, date }>' },
+        outputSchema: { totalUnread: 'number', messages: 'Array<{ id, from, subject, snippet, date }>' },
         requiresApprovalByDefault: false,
         timeoutMs: 5000,
       },
@@ -117,29 +118,38 @@ class ToolRegistry {
         maxResults: z.number().int().min(1).max(50).default(10),
       }),
       execute: async ({ maxResults }) => {
+        const messages = await gmailService.listUnreadMessages(maxResults);
         return {
-          totalUnread: 2,
-          messages: [
-            {
-              id: 'msg-001',
-              from: 'alex@company.com',
-              subject: 'Q4 Product Roadmap Update',
-              snippet: 'Please find attached the draft Q4 release roadmap for review.',
-              date: new Date().toISOString(),
-            },
-            {
-              id: 'msg-002',
-              from: 'notifications@github.com',
-              subject: 'Security Alert: Dependency update available',
-              snippet: 'Dependabot submitted a new PR for packages in zyper repo.',
-              date: new Date(Date.now() - 3600000).toISOString(),
-            },
-          ].slice(0, maxResults),
+          totalUnread: messages.length,
+          messages,
         };
       },
     });
 
-    // 4. gmail.create_draft (PREPARATORY)
+    // 4. gmail.read_message (READ_ONLY)
+    this.register({
+      contract: {
+        id: 'gmail.read_message',
+        name: 'Read Email Message',
+        description: 'Read the full content and metadata of a specific email message by ID.',
+        version: '1.0.0',
+        category: ToolCategory.READ_ONLY,
+        requiredScopes: ['gmail:read'],
+        inputSchema: { messageId: 'string' },
+        outputSchema: { message: 'GmailMessageDetail' },
+        requiresApprovalByDefault: false,
+        timeoutMs: 5000,
+      },
+      inputValidator: z.object({
+        messageId: z.string().min(1, 'Message ID is required'),
+      }),
+      execute: async ({ messageId }) => {
+        const message = await gmailService.readMessage(messageId);
+        return { message };
+      },
+    });
+
+    // 5. gmail.create_draft (PREPARATORY)
     this.register({
       contract: {
         id: 'gmail.create_draft',
@@ -159,18 +169,18 @@ class ToolRegistry {
         body: z.string().min(1, 'Body required'),
       }),
       execute: async ({ to, subject, body }) => {
+        const draft = await gmailService.createDraft(to, subject, body);
         return {
-          draftId: `draft-${crypto.randomUUID()}`,
+          draftId: draft.draftId,
           to,
           subject,
-          bodyPreview: body.slice(0, 50),
-          status: 'DRAFT_CREATED',
-          createdAt: new Date().toISOString(),
+          status: draft.status,
+          createdAt: draft.createdAt,
         };
       },
     });
 
-    // 5. gmail.send (CONSEQUENTIAL - requires approval)
+    // 6. gmail.send (CONSEQUENTIAL - requires approval)
     this.register({
       contract: {
         id: 'gmail.send',
@@ -190,13 +200,13 @@ class ToolRegistry {
         body: z.string().min(1, 'Body required'),
       }),
       execute: async ({ to, subject, body }) => {
+        const sent = await gmailService.sendEmail(to, subject, body);
         return {
-          messageId: `msg-${crypto.randomUUID()}`,
+          messageId: sent.messageId,
           to,
           subject,
-          bodySnippet: body.slice(0, 60),
-          status: 'SENT',
-          sentAt: new Date().toISOString(),
+          status: sent.status,
+          sentAt: sent.sentAt,
         };
       },
     });

@@ -15,6 +15,12 @@ import {
   RefreshCw,
   Lock,
   Unlock,
+  Link2,
+  Mail,
+  Calendar,
+  Share2,
+  Laptop,
+  ExternalLink,
 } from 'lucide-react';
 import { ToolContract, ToolCategory } from '@zyper/shared';
 
@@ -43,6 +49,15 @@ interface PendingApproval {
   expiresAt: string;
 }
 
+interface ConnectionItem {
+  provider: string;
+  name: string;
+  status: 'CONNECTED' | 'DISCONNECTED';
+  scopes: string[];
+  lastSyncAt?: string;
+  description: string;
+}
+
 const API_BASE = 'http://localhost:4000/api/v1';
 
 export const App: React.FC = () => {
@@ -54,10 +69,11 @@ export const App: React.FC = () => {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const [apiStatus, setApiStatus] = useState<'online' | 'offline' | 'checking'>('checking');
-  const [activeTab, setActiveTab] = useState<'chat' | 'approvals' | 'tasks' | 'services'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'approvals' | 'tasks' | 'services' | 'connections'>('chat');
 
   const [tools, setTools] = useState<ToolContract[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const [connections, setConnections] = useState<ConnectionItem[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -73,6 +89,7 @@ export const App: React.FC = () => {
     fetchConversations();
     fetchTools();
     fetchApprovals();
+    fetchConnections();
   }, []);
 
   // When active conversation changes, fetch its messages
@@ -90,6 +107,52 @@ export const App: React.FC = () => {
       setApiStatus(res.ok ? 'online' : 'offline');
     } catch {
       setApiStatus('offline');
+    }
+  };
+
+  const fetchConnections = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/connections`);
+      const data = await res.json();
+      if (data.success && data.data) {
+        setConnections(data.data);
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleConnectGmail = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/connections/gmail/auth-url`);
+      const data = await res.json();
+      if (data.success && data.data?.authUrl) {
+        window.open(data.data.authUrl, '_blank');
+      }
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleDisconnectGmail = async () => {
+    try {
+      await fetch(`${API_BASE}/connections/gmail/disconnect`, { method: 'POST' });
+      await fetchConnections();
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleToggleGmailMock = async (connected: boolean) => {
+    try {
+      await fetch(`${API_BASE}/connections/gmail/mock-toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connected }),
+      });
+      await fetchConnections();
+    } catch {
+      // fallback
     }
   };
 
@@ -429,6 +492,22 @@ export const App: React.FC = () => {
               <Boxes className="w-4 h-4" />
               Registered Tools ({tools.length})
             </button>
+            <button
+              onClick={() => setActiveTab('connections')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                activeTab === 'connections'
+                  ? 'bg-indigo-600/20 text-white border border-indigo-500/40 shadow-sm shadow-indigo-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Link2 className="w-4 h-4" />
+                Connected Tools
+              </div>
+              {connections.some((c) => c.status === 'CONNECTED') && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </button>
           </nav>
 
           {/* Conversation History List */}
@@ -479,6 +558,8 @@ export const App: React.FC = () => {
                 ? 'Registered Tool Registry & Safe Adapters'
                 : activeTab === 'approvals'
                 ? 'Pending Action Approvals Queue'
+                : activeTab === 'connections'
+                ? 'Connected Provider Accounts & Integrations'
                 : 'Task Scheduler & Dependency Graphs'}
             </h2>
             {isStreaming && (
@@ -495,6 +576,7 @@ export const App: React.FC = () => {
                 checkHealth();
                 fetchTools();
                 fetchApprovals();
+                fetchConnections();
               }}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors"
               title="Refresh"
@@ -758,6 +840,223 @@ export const App: React.FC = () => {
             </div>
             <div className="p-8 rounded-xl bg-slate-900/40 border border-white/10 text-center text-slate-400 text-sm">
               Workflow executions are created when goals are submitted in Operator Chat. Checkpoints survive process restarts.
+            </div>
+          </div>
+        )}
+
+        {/* Connected Tools & Integrations View */}
+        {activeTab === 'connections' && (
+          <div className="flex-1 overflow-y-auto p-8 space-y-6">
+            <div>
+              <h3 className="text-lg font-bold text-white">Connected Tools & Integrations</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Manage OAuth2 connections, authorized permissions, and credentials for cloud services and the local Windows companion.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Gmail Card */}
+              {(() => {
+                const gmailConn = connections.find((c) => c.provider === 'gmail');
+                const isConnected = gmailConn?.status === 'CONNECTED';
+
+                return (
+                  <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                            <Mail className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-base font-semibold text-white">Google Workspace / Gmail</h4>
+                            <span className="text-[11px] text-slate-400">Official OAuth2 Integration</span>
+                          </div>
+                        </div>
+
+                        <span
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
+                            isConnected
+                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                              : 'bg-slate-800 text-slate-400 border border-white/5'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                          {isConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Read unread messages, summarize inbox items, prepare email drafts, and dispatch approved communications.
+                      </p>
+
+                      <div className="pt-2">
+                        <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Authorized Scopes:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(gmailConn?.scopes || ['gmail.readonly', 'gmail.compose', 'gmail.send']).map((s) => (
+                            <span key={s} className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {gmailConn?.lastSyncAt && (
+                        <div className="text-[11px] text-slate-500">
+                          Last synchronized: <span className="font-mono text-slate-400">{new Date(gmailConn.lastSyncAt).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-4 border-t border-white/5 flex flex-wrap gap-2">
+                      {isConnected ? (
+                        <>
+                          <button
+                            onClick={handleDisconnectGmail}
+                            className="px-3.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-semibold transition-colors"
+                          >
+                            Disconnect
+                          </button>
+                          <button
+                            onClick={() => {
+                              setInputPrompt('Please list my unread Gmail messages and summarize any priority actions.');
+                              setActiveTab('chat');
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm shadow-indigo-600/30"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            Summarize Inbox in Chat
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={handleConnectGmail}
+                            className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-md shadow-indigo-600/30"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Authorize with Google
+                          </button>
+                          <button
+                            onClick={() => handleToggleGmailMock(true)}
+                            className="px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition-colors"
+                          >
+                            Simulate Connected
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Google Calendar Card */}
+              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        <Calendar className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold text-white">Google Calendar</h4>
+                        <span className="text-[11px] text-slate-400">Official Calendar API</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-white/5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Disconnected
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Inspect calendar schedules, prepare daily briefings, check meeting conflicts, and book draft events.
+                  </p>
+                  <div className="pt-2">
+                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Scopes:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">calendar.readonly</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">calendar.events</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-white/5">
+                  <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
+                    Configure Google Calendar (Phase 5)
+                  </button>
+                </div>
+              </div>
+
+              {/* X / Twitter Card */}
+              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                        <Share2 className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold text-white">X (Twitter)</h4>
+                        <span className="text-[11px] text-slate-400">Official X API v2</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-white/5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Disconnected
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Monitor market mentions, perform topic sentiment research, and draft posts requiring human authorization.
+                  </p>
+                  <div className="pt-2">
+                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Scopes:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">tweet.read</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">tweet.write</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-white/5">
+                  <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
+                    Configure X Integration (Phase 6)
+                  </button>
+                </div>
+              </div>
+
+              {/* Windows Local Companion Card */}
+              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                        <Laptop className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold text-white">Windows Local Companion</h4>
+                        <span className="text-[11px] text-slate-400">Loopback HTTP / Named Pipe</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-white/5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                      Standalone Ready
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Local execution boundary for launching whitelisted apps, searching user-approved directories, and media controls.
+                  </p>
+                  <div className="pt-2">
+                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Capabilities:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">desktop:app:launch</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">desktop:fs:search</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-white/5">
+                  <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
+                    Companion Active (Phase 7)
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
