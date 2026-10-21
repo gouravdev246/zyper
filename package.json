@@ -1,0 +1,26 @@
+{
+  "name": "zyper-operator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI Operator - Desktop and Cloud AI System",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace=@zyper/api run dev",
+    "dev:desktop": "npm --workspace=@zyper/desktop run dev",
+    "dev:orchestrator": "cd services/orchestrator && uv run uvicorn src.main:app --reload --port 8000",
+    "dev": "concurrently -n \"API,ORCH,DESK\" -c \"blue,green,magenta\" \"npm run dev:api\" \"npm run dev:orchestrator\" \"npm run dev:desktop\"",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:orchestrator": "cd services/orchestrator && uv run pytest",
+    "lint": "npm run lint --workspaces --if-present",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.5.3",
+    "typescript": "^5.7.3"
+  }
+}
