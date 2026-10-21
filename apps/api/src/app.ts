@@ -7,6 +7,7 @@ import { connectionsRouter } from './routes/connections.js';
 import { devicesRouter } from './routes/devices.js';
 import { rulesRouter } from './routes/rules.js';
 import { auditRouter } from './routes/audit.js';
+import { conversationsRouter } from './routes/conversations.js';
 
 export function createApp(): Express {
   const app = express();
@@ -24,6 +25,7 @@ export function createApp(): Express {
   apiV1.use(devicesRouter);
   apiV1.use(rulesRouter);
   apiV1.use(auditRouter);
+  apiV1.use(conversationsRouter);
 
   app.use('/api/v1', apiV1);
 
