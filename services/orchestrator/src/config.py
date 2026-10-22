@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     API_BASE_URL: str = "http://localhost:4000/api/v1"
 
     # Multi-provider LLM Configuration
-    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "anthropic"] = "gemini"
+    DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "anthropic", "nebius"] = "gemini"
 
     # Google Gemini
     GEMINI_API_KEY: str = ""
@@ -27,5 +27,10 @@ class Settings(BaseSettings):
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-3-7-sonnet-20250219"
+
+    # Nebius Token Factory (OpenAI-compatible)
+    NEBIUS_API_KEY: str = ""
+    NEBIUS_BASE_URL: str = "https://api.tokenfactory.nebius.com/v1/"
+    NEBIUS_MODEL: str = "openai/gpt-oss-120b"
 
 settings = Settings()

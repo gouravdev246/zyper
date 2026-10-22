@@ -1,15 +1,21 @@
 """
 LLM and Tool Calling Service for Zyper Personal AI Operator.
 
-Handles streaming chat completions with Google Gemini and orchestrates
-tool execution through the Express API Safe Tool Registry and Policy Engine.
+Supports multi-provider execution:
+- Google Gemini (native REST stream)
+- Nebius Token Factory / OpenAI-compatible endpoint (using openai SDK)
+
+Handles streaming chat completions, tool execution via Express API Safe Tool
+Registry, and automated fallback when provider rate limits are encountered.
 """
 
+import os
 import json
 import logging
 import httpx
 from typing import Dict, Any, List, Optional, AsyncGenerator
 from fastapi import Request
+from openai import AsyncOpenAI, OpenAI
 from src.config import settings
 
 logger = logging.getLogger("zyper.orchestrator.llm")
@@ -143,9 +149,47 @@ def build_gemini_tools() -> List[Dict[str, Any]]:
     ]
 
 
+def build_openai_tools() -> List[Dict[str, Any]]:
+    """
+    Builds OpenAI-compatible tool specifications matching the Safe Tool Registry.
+    """
+    gemini_tools = build_gemini_tools()
+    openai_tools: List[Dict[str, Any]] = []
+
+    for gt in gemini_tools:
+        props = {}
+        gemini_props = gt.get("parameters", {}).get("properties", {})
+        for prop_name, prop_data in gemini_props.items():
+            prop_type = prop_data.get("type", "STRING").lower()
+            if prop_type == "integer":
+                prop_type = "integer"
+            else:
+                prop_type = "string"
+
+            props[prop_name] = {
+                "type": prop_type,
+                "description": prop_data.get("description", ""),
+            }
+
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": gt["name"],
+                "description": gt["description"],
+                "parameters": {
+                    "type": "object",
+                    "properties": props,
+                    "required": gt.get("parameters", {}).get("required", []),
+                },
+            },
+        })
+
+    return openai_tools
+
+
 def map_fn_to_tool_id(fn_name: str) -> str:
     """
-    Maps Gemini function name (e.g. gmail_list_unread)
+    Maps LLM function name (e.g. gmail_list_unread)
     back to internal tool registry ID (e.g. gmail.list_unread).
     """
     mapping = {
@@ -192,6 +236,172 @@ async def execute_tool_via_api(tool_id: str, tool_input: Dict[str, Any], run_id:
         }
 
 
+async def stream_nebius_chat_and_tools(
+    run_id: str,
+    goal: str,
+    history: Optional[List[Dict[str, Any]]],
+    req: Request,
+    active_runs: Dict[str, Any],
+) -> AsyncGenerator[str, None]:
+    """
+    Streams completions from Nebius AI (OpenAI-compatible Token Factory).
+    """
+    api_key = settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY")
+    base_url = settings.NEBIUS_BASE_URL or os.environ.get("NEBIUS_BASE_URL") or "https://api.tokenfactory.nebius.com/v1/"
+    model_name = settings.NEBIUS_MODEL or os.environ.get("NEBIUS_MODEL") or "openai/gpt-oss-120b"
+
+    if not api_key:
+        yield f"data: {json.dumps({'type': 'token', 'content': 'Error: NEBIUS_API_KEY is not set in .env. Please configure it to enable Nebius AI.'})}\n\n"
+        yield f"data: {json.dumps({'type': 'run.completed', 'runId': run_id, 'status': 'FAILED'})}\n\n"
+        return
+
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_INSTRUCTION}
+    ]
+
+    if history:
+        for msg in history[-10:]:
+            role = "user" if msg.get("sender") == "user" or msg.get("role") == "user" else "assistant"
+            content = msg.get("content", "")
+            if content:
+                messages.append({"role": role, "content": content})
+
+    messages.append({
+        "role": "user",
+        "content": [
+            {
+                "type": "text",
+                "text": goal,
+            }
+        ],
+    })
+
+    yield f"data: {json.dumps({'type': 'task.started', 'task': 'reasoning', 'description': f'Reasoning with Nebius ({model_name})'})}\n\n"
+
+    tools = build_openai_tools()
+
+    try:
+        # Request stream with tools
+        response_stream = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            tools=tools,
+            stream=True,
+        )
+    except Exception as e:
+        logger.warning(f"Nebius stream with tools threw ({e}), falling back to stream without tools")
+        response_stream = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            stream=True,
+        )
+
+    tool_calls_list: List[Dict[str, Any]] = []
+    current_tc = None
+
+    async for chunk in response_stream:
+        if active_runs.get(run_id, {}).get("cancelled") or await req.is_disconnected():
+            active_runs[run_id]["cancelled"] = True
+            yield f"data: {json.dumps({'type': 'run.cancelled', 'runId': run_id})}\n\n"
+            return
+
+        if not chunk.choices:
+            continue
+
+        delta = chunk.choices[0].delta
+        if delta.content:
+            yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
+
+        if delta.tool_calls:
+            for tc in delta.tool_calls:
+                if tc.id or (tc.function and tc.function.name):
+                    current_tc = {
+                        "id": tc.id or f"call_{len(tool_calls_list)}",
+                        "name": tc.function.name if tc.function and tc.function.name else "",
+                        "arguments": (tc.function.arguments or "") if tc.function else "",
+                    }
+                    tool_calls_list.append(current_tc)
+                elif current_tc is not None and tc.function and tc.function.arguments:
+                    current_tc["arguments"] += tc.function.arguments
+
+    # Process any accumulated tool calls
+    for tc in tool_calls_list:
+        fn_name = tc["name"]
+        args_str = tc["arguments"]
+        try:
+            fn_args = json.loads(args_str) if args_str else {}
+        except Exception:
+            fn_args = {}
+
+        tool_id = map_fn_to_tool_id(fn_name)
+        yield f"data: {json.dumps({'type': 'task.started', 'task': 'tool_call', 'description': f'Executing {tool_id}'})}\n\n"
+
+        tool_result = await execute_tool_via_api(tool_id, fn_args, run_id)
+        tool_status = tool_result.get("status")
+
+        if tool_status == "REQUIRES_APPROVAL":
+            approval = tool_result.get("approval", {})
+            yield f"data: {json.dumps({'type': 'approval.required', 'approval': approval})}\n\n"
+            msg = f"\n\n**Action Requires Approval**: The requested action `{tool_id}` involves consequential side effects. A pending approval record has been generated. Please navigate to the **Approvals** tab to inspect and authorize this action."
+            yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
+
+        elif tool_status == "SUCCESS":
+            output_data = tool_result.get("output", {})
+            yield f"data: {json.dumps({'type': 'tool.completed', 'toolId': tool_id, 'output': output_data})}\n\n"
+
+            # Prepare follow-up messages with tool result
+            follow_up_messages = list(messages)
+            follow_up_messages.append({
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": fn_name,
+                            "arguments": args_str,
+                        },
+                    }
+                ],
+            })
+            follow_up_messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": json.dumps(output_data),
+            })
+
+            try:
+                follow_up_stream = await client.chat.completions.create(
+                    model=model_name,
+                    messages=follow_up_messages,
+                    stream=True,
+                )
+                async for chunk in follow_up_stream:
+                    if active_runs.get(run_id, {}).get("cancelled") or await req.is_disconnected():
+                        return
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk.choices[0].delta.content})}\n\n"
+            except Exception as f_err:
+                logger.error(f"Nebius follow-up synthesis error: {f_err}")
+                msgs = output_data.get("messages", [])
+                if msgs:
+                    yield f"data: {json.dumps({'type': 'token', 'content': '\n\nHere are your recent unread emails:\n'})}\n\n"
+                    for m in msgs[:5]:
+                        from_addr = m.get("from", "Unknown")
+                        subj = m.get("subject", "(No subject)")
+                        yield f"data: {json.dumps({'type': 'token', 'content': f'- **{from_addr}**: {subj}\n'})}\n\n"
+        else:
+            err_message = tool_result.get("error", "Action was denied or failed")
+            yield f"data: {json.dumps({'type': 'token', 'content': f'\\n\\n[Tool execution notice: {err_message}]'})}\n\n"
+
+    if run_id in active_runs:
+        active_runs[run_id]["status"] = "COMPLETED"
+
+    yield f"data: {json.dumps({'type': 'run.completed', 'runId': run_id, 'status': 'COMPLETED'})}\n\n"
+
+
 async def stream_chat_and_tools(
     run_id: str,
     goal: str,
@@ -200,24 +410,36 @@ async def stream_chat_and_tools(
     active_runs: Dict[str, Any],
 ) -> AsyncGenerator[str, None]:
     """
-    Orchestrates streaming chat with Google Gemini.
-    Detects function calls, executes them via Express API, feeds back results,
-    and streams reasoning and answer tokens over Server-Sent Events.
+    Orchestrates streaming chat with the configured LLM provider.
+    Automatically handles rate limit fallback from Gemini to Nebius AI.
     """
     # 1. Yield run.started
     yield f"data: {json.dumps({'type': 'run.started', 'runId': run_id, 'goal': goal})}\n\n"
 
-    # 2. Check Gemini API key
+    # 2. Check if Nebius is configured as default provider or if Gemini is absent
+    provider = settings.DEFAULT_LLM_PROVIDER
+    has_nebius_key = bool(settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY"))
+
+    if provider == "nebius" or (has_nebius_key and not settings.GEMINI_API_KEY):
+        async for evt in stream_nebius_chat_and_tools(run_id, goal, history, req, active_runs):
+            yield evt
+        return
+
+    # 3. Default to Gemini provider
     api_key = settings.GEMINI_API_KEY
     if not api_key:
-        yield f"data: {json.dumps({'type': 'token', 'content': 'Error: GEMINI_API_KEY is not configured in the environment.'})}\n\n"
+        if has_nebius_key:
+            async for evt in stream_nebius_chat_and_tools(run_id, goal, history, req, active_runs):
+                yield evt
+            return
+
+        yield f"data: {json.dumps({'type': 'token', 'content': 'Error: Neither GEMINI_API_KEY nor NEBIUS_API_KEY is configured in the environment.'})}\n\n"
         yield f"data: {json.dumps({'type': 'run.completed', 'runId': run_id, 'status': 'FAILED'})}\n\n"
         return
 
-    # 3. Format contents for Gemini
+    # 4. Format contents for Gemini
     contents: List[Dict[str, Any]] = []
 
-    # Include recent history if available
     if history:
         for msg in history[-10:]:
             role = "user" if msg.get("sender") == "user" or msg.get("role") == "user" else "model"
@@ -228,7 +450,6 @@ async def stream_chat_and_tools(
                     "parts": [{"text": text_content}],
                 })
 
-    # Append the current user goal/query
     contents.append({
         "role": "user",
         "parts": [{"text": goal}],
@@ -249,7 +470,6 @@ async def stream_chat_and_tools(
 
     pending_function_call = None
     pending_model_parts = None
-    streamed_any_text = False
 
     try:
         yield f"data: {json.dumps({'type': 'task.started', 'task': 'reasoning', 'description': 'Analyzing request with Gemini'})}\n\n"
@@ -260,12 +480,20 @@ async def stream_chat_and_tools(
                     err_body = await response.aread()
                     error_text = err_body.decode("utf-8", errors="replace")
                     logger.error(f"Gemini API returned error {response.status_code}: {error_text}")
-                    yield f"data: {json.dumps({'type': 'token', 'content': f'Assistant error: Gemini API returned status {response.status_code}.'})}\n\n"
+
+                    # Automatically fall back to Nebius if Gemini quota is exhausted
+                    if (response.status_code == 429 or "quota" in error_text.lower() or "retry" in error_text.lower()) and has_nebius_key:
+                        logger.info("Gemini free tier quota exhausted, switching to Nebius AI...")
+                        yield f"data: {json.dumps({'type': 'token', 'content': '*(Gemini free tier quota exhausted, switching seamlessly to Nebius...)*\n\n'})}\n\n"
+                        async for evt in stream_nebius_chat_and_tools(run_id, goal, history, req, active_runs):
+                            yield evt
+                        return
+
+                    yield f"data: {json.dumps({'type': 'token', 'content': f'Assistant error: Gemini API returned status {response.status_code}. {error_text[:180]}'})}\n\n"
                     yield f"data: {json.dumps({'type': 'run.completed', 'runId': run_id, 'status': 'FAILED'})}\n\n"
                     return
 
                 async for line in response.aiter_lines():
-                    # Handle client disconnect or run cancellation
                     if active_runs.get(run_id, {}).get("cancelled") or await req.is_disconnected():
                         active_runs[run_id]["cancelled"] = True
                         yield f"data: {json.dumps({'type': 'run.cancelled', 'runId': run_id})}\n\n"
@@ -289,18 +517,14 @@ async def stream_chat_and_tools(
 
                     parts = candidates[0].get("content", {}).get("parts", [])
                     for part in parts:
-                        # Check for text token
                         if "text" in part:
-                            token_text = part["text"]
-                            streamed_any_text = True
-                            yield f"data: {json.dumps({'type': 'token', 'content': token_text})}\n\n"
+                            yield f"data: {json.dumps({'type': 'token', 'content': part['text']})}\n\n"
 
-                        # Check for tool function call
                         if "functionCall" in part:
                             pending_function_call = part["functionCall"]
                             pending_model_parts = parts
 
-        # 4. If Gemini invoked a tool, execute it via the Express API
+        # If Gemini invoked a tool, execute it via the Express API
         if pending_function_call:
             fn_name = pending_function_call.get("name")
             fn_args = pending_function_call.get("args", {})
@@ -308,7 +532,6 @@ async def stream_chat_and_tools(
 
             yield f"data: {json.dumps({'type': 'task.started', 'task': 'tool_call', 'description': f'Executing {tool_id}'})}\n\n"
 
-            # Execute tool through Safe Tool Registry
             tool_result = await execute_tool_via_api(tool_id, fn_args, run_id)
             tool_status = tool_result.get("status")
 
@@ -322,7 +545,7 @@ async def stream_chat_and_tools(
                 output_data = tool_result.get("output", {})
                 yield f"data: {json.dumps({'type': 'tool.completed', 'toolId': tool_id, 'output': output_data})}\n\n"
 
-                # 5. Feed tool response back into Gemini to generate the final synthesized answer
+                # Feed tool response back into Gemini to generate the final synthesized answer
                 follow_up_contents = list(contents)
                 follow_up_contents.append({
                     "role": "model",
@@ -374,20 +597,17 @@ async def stream_chat_and_tools(
                             err_body = await follow_up_resp.aread()
                             err_msg = err_body.decode("utf-8", errors="replace")
                             logger.error(f"Gemini follow-up error {follow_up_resp.status_code}: {err_msg}")
-                            # Provide direct synthesis from output if model stream failed
                             msgs = output_data.get("messages", [])
                             if msgs:
                                 yield f"data: {json.dumps({'type': 'token', 'content': '\n\nHere are your recent unread emails:\n'})}\n\n"
                                 for m in msgs[:5]:
                                     from_addr = m.get("from", "Unknown")
                                     subj = m.get("subject", "(No subject)")
-                                    line_str = f"- **{from_addr}**: {subj}\n"
-                                    yield f"data: {json.dumps({'type': 'token', 'content': line_str})}\n\n"
+                                    yield f"data: {json.dumps({'type': 'token', 'content': f'- **{from_addr}**: {subj}\n'})}\n\n"
             else:
                 err_message = tool_result.get("error", "Action was denied or failed")
                 yield f"data: {json.dumps({'type': 'token', 'content': f'\\n\\n[Tool execution notice: {err_message}]'})}\n\n"
 
-        # 6. Mark run completed
         if run_id in active_runs:
             active_runs[run_id]["status"] = "COMPLETED"
 
