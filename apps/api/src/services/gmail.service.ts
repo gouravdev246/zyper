@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { prisma } from '../lib/prisma.js';
 import { encrypt, decrypt } from '../lib/encryption.js';
 import { logger } from '../lib/logger.js';
+import { env } from '../config/env.js';
 
 const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
@@ -32,9 +33,9 @@ export class GmailService {
   private defaultUserId = '00000000-0000-0000-0000-000000000001';
 
   private getOAuthClient(redirectUri?: string) {
-    const clientId = process.env.GOOGLE_CLIENT_ID || 'mock_google_client_id';
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || 'mock_google_client_secret';
-    const defaultRedirect = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:4000/api/v1/connections/gmail/callback';
+    const clientId = env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || 'mock_google_client_id';
+    const clientSecret = env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || 'mock_google_client_secret';
+    const defaultRedirect = env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:4000/api/v1/connections/gmail/callback';
 
     return new google.auth.OAuth2(clientId, clientSecret, redirectUri || defaultRedirect);
   }
