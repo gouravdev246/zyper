@@ -1,14 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { gmailService } from '../services/gmail.service.js';
 import { calendarService } from '../services/calendar.service.js';
+import { windowsCompanionService } from '../services/windows-companion.service.js';
 
 export const connectionsRouter = Router();
 
 // GET /api/v1/connections - list integrations with live provider statuses
 connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
-  const [gmailStatus, calendarStatus] = await Promise.all([
+  const [gmailStatus, calendarStatus, companionStatus] = await Promise.all([
     gmailService.getConnectionStatus(),
     calendarService.getConnectionStatus(),
+    windowsCompanionService.getConnectionStatus(),
   ]);
 
   res.json({
@@ -40,8 +42,12 @@ connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
       {
         provider: 'windows_companion',
         name: 'Windows Local Companion',
-        status: 'DISCONNECTED',
-        scopes: ['desktop:app:launch', 'desktop:fs:search', 'desktop:media:control'],
+        status: companionStatus.connected ? 'CONNECTED' : companionStatus.status === 'REVOKED' ? 'REVOKED' : 'DISCONNECTED',
+        scopes: companionStatus.scopes,
+        lastSyncAt: companionStatus.lastSeenAt,
+        deviceName: companionStatus.deviceName,
+        approvedFolders: companionStatus.approvedFolders,
+        whitelistedApps: companionStatus.whitelistedApps,
         description: 'Native desktop companion: application launching, folder search, and media control.',
       },
     ],
@@ -236,6 +242,51 @@ connectionsRouter.post('/connections/google_calendar/mock-toggle', (req: Request
   });
 });
 
+// ==========================================
+// Windows Local Companion Routes
+// ==========================================
+
+// GET /api/v1/connections/windows_companion/status
+connectionsRouter.get('/connections/windows_companion/status', async (_req: Request, res: Response) => {
+  const status = await windowsCompanionService.getConnectionStatus();
+  res.json({
+    success: true,
+    data: status,
+  });
+});
+
+// POST /api/v1/connections/windows_companion/pair
+connectionsRouter.post('/connections/windows_companion/pair', async (req: Request, res: Response) => {
+  const { deviceName } = req.body;
+  const result = await windowsCompanionService.pairDevice(deviceName);
+  res.json({
+    success: true,
+    data: result,
+  });
+});
+
+// POST /api/v1/connections/windows_companion/revoke
+connectionsRouter.post('/connections/windows_companion/revoke', async (_req: Request, res: Response) => {
+  const result = await windowsCompanionService.revokeDevice();
+  res.json({
+    success: true,
+    data: result,
+  });
+});
+
+// POST /api/v1/connections/windows_companion/mock-toggle
+connectionsRouter.post('/connections/windows_companion/mock-toggle', (req: Request, res: Response) => {
+  const { connected } = req.body;
+  windowsCompanionService.setMockConnected(Boolean(connected));
+  res.json({
+    success: true,
+    data: {
+      provider: 'windows_companion',
+      connected: Boolean(connected),
+    },
+  });
+});
+
 // DELETE /api/v1/connections/:provider - generic revoke endpoint
 connectionsRouter.delete('/connections/:provider', async (req: Request, res: Response) => {
   const { provider } = req.params;
@@ -243,6 +294,8 @@ connectionsRouter.delete('/connections/:provider', async (req: Request, res: Res
     await gmailService.disconnect();
   } else if (provider === 'google_calendar') {
     await calendarService.disconnect();
+  } else if (provider === 'windows_companion') {
+    await windowsCompanionService.revokeDevice();
   }
 
   res.json({

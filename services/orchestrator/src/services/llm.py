@@ -28,12 +28,16 @@ You assist the user by answering questions, executing tasks, and integrating wit
 Available tools include:
 - Gmail: listing unread messages, reading emails, preparing drafts, and sending emails.
 - Google Calendar: listing schedules, checking meeting conflicts, and scheduling events.
+- Windows Desktop: opening permitted applications (notepad, calculator, vscode, terminal, browser, explorer, spotify), controlling media playback (play_pause, next_track, prev_track, volume_up, volume_down, mute), and searching local files in approved folders (documents, downloads, desktop, workspace).
 
 Tool Calling Rules:
 1. When the user asks to check, list, read, or summarize unread emails, IMMEDIATELY call `gmail_list_unread`. Once the tool returns the emails, summarize them clearly for the user. Do not refuse to summarize or ask for confirmation first.
 2. When the user asks to check their calendar or schedule, IMMEDIATELY call `calendar_list_events`.
-3. For consequential actions (like sending an email or booking a calendar event), make sure you have the required parameters before calling the tool.
-4. Keep answers helpful, professional, polite, and well-structured with markdown.
+3. When the user asks to open an app (e.g. "open notepad", "open calculator", "launch vs code"), call `app_open` with the appropriate appId.
+4. When the user asks to control media or audio (e.g. "mute volume", "pause music", "turn volume up"), call `media_control` with the corresponding action.
+5. When the user asks to find or search files in a folder, call `files_search` with the target folderId (documents, downloads, desktop, workspace) and search query.
+6. For consequential actions (like sending an email or booking a calendar event), make sure you have the required parameters before calling the tool.
+7. Keep answers helpful, professional, polite, and well-structured with markdown.
 """.strip()
 
 
@@ -146,6 +150,56 @@ def build_gemini_tools() -> List[Dict[str, Any]]:
                 "required": ["summary", "start", "end"],
             },
         },
+        {
+            "name": "app_open",
+            "description": "Open an authorized desktop application on the Windows host machine (notepad, calculator, vscode, terminal, browser, explorer, spotify).",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "appId": {
+                        "type": "STRING",
+                        "description": "Application identifier: notepad, calculator, vscode, terminal, browser, explorer, spotify",
+                    }
+                },
+                "required": ["appId"],
+            },
+        },
+        {
+            "name": "media_control",
+            "description": "Control Windows system audio and media playback.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "action": {
+                        "type": "STRING",
+                        "description": "Media action: play_pause, next_track, prev_track, volume_up, volume_down, mute",
+                    }
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "files_search",
+            "description": "Search for files within approved local directories (documents, downloads, desktop, workspace) with path traversal security.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "folderId": {
+                        "type": "STRING",
+                        "description": "Approved directory: documents, downloads, desktop, or workspace",
+                    },
+                    "query": {
+                        "type": "STRING",
+                        "description": "File name search keyword or extension (e.g. .pdf, invoice, notes)",
+                    },
+                    "maxResults": {
+                        "type": "INTEGER",
+                        "description": "Maximum number of files to return (default: 10)",
+                    },
+                },
+                "required": ["folderId", "query"],
+            },
+        },
     ]
 
 
@@ -200,6 +254,9 @@ def map_fn_to_tool_id(fn_name: str) -> str:
         "calendar_list_events": "calendar.list_events",
         "calendar_check_conflicts": "calendar.check_conflicts",
         "calendar_create_event": "calendar.create_event",
+        "app_open": "app.open",
+        "media_control": "media.control",
+        "files_search": "files.search",
     }
     return mapping.get(fn_name, fn_name.replace("_", "."))
 

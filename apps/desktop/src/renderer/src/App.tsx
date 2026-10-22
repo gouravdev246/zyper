@@ -52,9 +52,12 @@ interface PendingApproval {
 interface ConnectionItem {
   provider: string;
   name: string;
-  status: 'CONNECTED' | 'DISCONNECTED';
+  status: 'CONNECTED' | 'DISCONNECTED' | 'REVOKED';
   scopes: string[];
   lastSyncAt?: string;
+  deviceName?: string;
+  approvedFolders?: string[];
+  whitelistedApps?: string[];
   description: string;
 }
 
@@ -191,6 +194,30 @@ export const App: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connected }),
+      });
+      await fetchConnections();
+    } catch {
+      // fallback
+    }
+  };
+
+  const handlePairCompanion = async () => {
+    try {
+      await fetch(`${API_BASE}/connections/windows_companion/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceName: 'Zyper-Windows-Companion' }),
+      });
+      await fetchConnections();
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleRevokeCompanion = async () => {
+    try {
+      await fetch(`${API_BASE}/connections/windows_companion/revoke`, {
+        method: 'POST',
       });
       await fetchConnections();
     } catch {
@@ -1164,40 +1191,141 @@ export const App: React.FC = () => {
               </div>
 
               {/* Windows Local Companion Card */}
-              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-indigo-500/30 transition-all flex flex-col justify-between">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20">
-                        <Laptop className="w-5 h-5" />
+              {(() => {
+                const winConn = connections.find((c) => c.provider === 'windows_companion');
+                const isPaired = winConn?.status === 'CONNECTED';
+                const isRevoked = winConn?.status === 'REVOKED';
+
+                return (
+                  <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-violet-500/30 transition-all flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 rounded-lg bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                            <Laptop className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-base font-semibold text-white">Windows Local Companion</h4>
+                            <span className="text-[11px] text-slate-400">
+                              {winConn?.deviceName ? `Host: ${winConn.deviceName}` : 'Loopback IPC / Named Pipe'}
+                            </span>
+                          </div>
+                        </div>
+                        <span
+                          className={`text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
+                            isPaired
+                              ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                              : isRevoked
+                              ? 'bg-rose-500/10 text-rose-300 border border-rose-500/20'
+                              : 'bg-slate-800 text-slate-400 border border-white/5'
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isPaired ? 'bg-emerald-400 animate-pulse' : isRevoked ? 'bg-rose-500' : 'bg-slate-500'
+                            }`}
+                          />
+                          {isPaired ? 'Paired & Active' : isRevoked ? 'Revoked' : 'Disconnected'}
+                        </span>
                       </div>
-                      <div>
-                        <h4 className="text-base font-semibold text-white">Windows Local Companion</h4>
-                        <span className="text-[11px] text-slate-400">Loopback HTTP / Named Pipe</span>
+
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Restricted local boundary for launching whitelisted desktop applications, controlling media playback, and searching approved folders with strict directory traversal prevention.
+                      </p>
+
+                      <div className="pt-1 space-y-2">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                            Approved Folders:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {['documents', 'downloads', 'desktop', 'workspace'].map((f) => (
+                              <span
+                                key={f}
+                                className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10"
+                              >
+                                {f}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+                            Whitelisted Apps:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {['notepad', 'calculator', 'vscode', 'terminal', 'browser', 'spotify'].map((app) => (
+                              <span
+                                key={app}
+                                className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20"
+                              >
+                                {app}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {winConn?.lastSyncAt && (
+                        <div className="text-[11px] text-slate-500">
+                          Last heartbeat: <span className="font-mono text-slate-400">{new Date(winConn.lastSyncAt).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-4 border-t border-white/5 space-y-2.5">
+                      <div className="flex flex-wrap gap-2">
+                        {isPaired ? (
+                          <>
+                            <button
+                              onClick={handleRevokeCompanion}
+                              className="px-3.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-semibold transition-colors"
+                            >
+                              Revoke Device
+                            </button>
+                            <button
+                              onClick={() => {
+                                setInputPrompt('Open Notepad on my Windows computer');
+                                setActiveTab('chat');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition-colors"
+                            >
+                              Open Notepad
+                            </button>
+                            <button
+                              onClick={() => {
+                                setInputPrompt('Open Calculator');
+                                setActiveTab('chat');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition-colors"
+                            >
+                              Open Calculator
+                            </button>
+                            <button
+                              onClick={() => {
+                                setInputPrompt('Search for .ts files in my workspace directory');
+                                setActiveTab('chat');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors shadow-sm shadow-violet-600/30"
+                            >
+                              Search Files in Chat
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={handlePairCompanion}
+                            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-md shadow-violet-600/30"
+                          >
+                            <Laptop className="w-3.5 h-3.5" />
+                            Pair Local Windows Companion
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-white/5 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                      Standalone Ready
-                    </span>
                   </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Local execution boundary for launching whitelisted apps, searching user-approved directories, and media controls.
-                  </p>
-                  <div className="pt-2">
-                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Capabilities:</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">desktop:app:launch</span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">desktop:fs:search</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="pt-4 border-t border-white/5">
-                  <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
-                    Companion Active (Phase 7)
-                  </button>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </div>
         )}
