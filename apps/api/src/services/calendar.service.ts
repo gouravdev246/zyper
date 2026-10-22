@@ -37,6 +37,7 @@ export class CalendarService {
     const clientId = env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || 'mock_google_client_id';
     const clientSecret = env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || 'mock_google_client_secret';
     const defaultRedirect =
+      env.GOOGLE_CALENDAR_REDIRECT_URI ||
       process.env.GOOGLE_CALENDAR_REDIRECT_URI ||
       'http://localhost:4000/api/v1/connections/google_calendar/callback';
 

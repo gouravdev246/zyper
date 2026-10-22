@@ -152,35 +152,73 @@ export class GmailService {
         const encryptedAccess = encrypt(tokens.access_token);
         const encryptedRefresh = tokens.refresh_token ? encrypt(tokens.refresh_token) : null;
 
-        const connection = await prisma.toolConnection.upsert({
-          where: {
-            userId_provider: {
+        const scopeStr = typeof tokens.scope === 'string' ? tokens.scope : '';
+        const isCalendar = scopeStr.includes('calendar');
+        const isGmail = scopeStr.includes('gmail') || !isCalendar;
+
+        if (isGmail) {
+          const connection = await prisma.toolConnection.upsert({
+            where: {
+              userId_provider: {
+                userId: this.defaultUserId,
+                provider: 'gmail',
+              },
+            },
+            update: {
+              status: 'CONNECTED',
+              lastSyncAt: new Date(),
+              revokedAt: null,
+            },
+            create: {
               userId: this.defaultUserId,
               provider: 'gmail',
+              status: 'CONNECTED',
             },
-          },
-          update: {
-            status: 'CONNECTED',
-            lastSyncAt: new Date(),
-            revokedAt: null,
-          },
-          create: {
-            userId: this.defaultUserId,
-            provider: 'gmail',
-            status: 'CONNECTED',
-          },
-        });
+          });
 
-        await prisma.oAuthCredential.create({
-          data: {
-            connectionId: connection.id,
-            accessTokenEncrypted: encryptedAccess,
-            refreshTokenEncrypted: encryptedRefresh,
-            tokenType: tokens.token_type || 'Bearer',
-            scope: GMAIL_SCOPES.join(' '),
-            expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
-          },
-        });
+          await prisma.oAuthCredential.create({
+            data: {
+              connectionId: connection.id,
+              accessTokenEncrypted: encryptedAccess,
+              refreshTokenEncrypted: encryptedRefresh,
+              tokenType: tokens.token_type || 'Bearer',
+              scope: GMAIL_SCOPES.join(' '),
+              expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+            },
+          });
+        }
+
+        if (isCalendar) {
+          const calConnection = await prisma.toolConnection.upsert({
+            where: {
+              userId_provider: {
+                userId: this.defaultUserId,
+                provider: 'google_calendar',
+              },
+            },
+            update: {
+              status: 'CONNECTED',
+              lastSyncAt: new Date(),
+              revokedAt: null,
+            },
+            create: {
+              userId: this.defaultUserId,
+              provider: 'google_calendar',
+              status: 'CONNECTED',
+            },
+          });
+
+          await prisma.oAuthCredential.create({
+            data: {
+              connectionId: calConnection.id,
+              accessTokenEncrypted: encryptedAccess,
+              refreshTokenEncrypted: encryptedRefresh,
+              tokenType: tokens.token_type || 'Bearer',
+              scope: scopeStr || 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+              expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+            },
+          });
+        }
       } catch (dbErr) {
         logger.debug('Database token storage skipped in dev, cached in memory');
       }

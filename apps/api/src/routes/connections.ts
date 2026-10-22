@@ -104,8 +104,8 @@ connectionsRouter.get('/connections/gmail/callback', async (req: Request, res: R
       <html>
         <body style="background:#0b0f17;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
           <div style="text-align:center;padding:32px;background:#131b2e;border-radius:12px;border:1px solid rgba(255,255,255,0.1);">
-            <h2 style="color:#4ade80;">Gmail Connected Successfully</h2>
-            <p style="color:#94a3b8;">You may close this window and return to the Zyper Desktop application.</p>
+            <h2 style="color:#4ade80;">Google Connected Successfully</h2>
+            <p style="color:#94a3b8;">Your account integration is active. You may close this window and return to the Zyper Desktop application.</p>
           </div>
         </body>
       </html>

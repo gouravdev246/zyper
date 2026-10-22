@@ -20,6 +20,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().default('http://localhost:4000/api/v1/connections/gmail/callback'),
+  GOOGLE_CALENDAR_REDIRECT_URI: z.string().default('http://localhost:4000/api/v1/connections/google_calendar/callback'),
 });
 
 export const env = envSchema.parse(process.env);
