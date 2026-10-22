@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { policyService } from '../services/policy.service.js';
+import { toolExecutionService } from '../services/tool-execution.service.js';
+import { logger } from '../lib/logger.js';
 
 export const approvalsRouter = Router();
 
@@ -18,7 +20,7 @@ approvalsRouter.get('/approvals', async (_req: Request, res: Response) => {
   });
 });
 
-// POST /api/v1/approvals/:id/decision - approve or reject
+// POST /api/v1/approvals/:id/decision - approve or reject and execute if approved
 approvalsRouter.post('/approvals/:id/decision', async (req: Request, res: Response) => {
   const approvalId = String(req.params.id);
   const parseResult = approvalDecisionSchema.safeParse(req.body);
@@ -45,6 +47,40 @@ approvalsRouter.post('/approvals/:id/decision', async (req: Request, res: Respon
       },
     });
     return;
+  }
+
+  // If approved, immediately execute the authorized tool action
+  if (decision === 'APPROVED') {
+    try {
+      logger.info(`Executing approved tool action for ${updated.toolId} (approval: ${updated.id})`);
+      const executionResult = await toolExecutionService.execute({
+        toolId: updated.toolId,
+        input: updated.actionPayload,
+        runId: updated.runId,
+        taskId: updated.taskId,
+        approvalId: updated.id,
+      });
+
+      res.json({
+        success: true,
+        data: {
+          ...updated,
+          execution: executionResult,
+        },
+      });
+      return;
+    } catch (execErr: unknown) {
+      const msg = execErr instanceof Error ? execErr.message : 'Tool execution error';
+      logger.error({ err: execErr }, `Failed to execute approved action ${updated.toolId}`);
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'EXECUTION_FAILED',
+          message: `Approved action failed to execute: ${msg}`,
+        },
+      });
+      return;
+    }
   }
 
   res.json({
