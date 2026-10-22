@@ -50,10 +50,11 @@ runsRouter.post('/runs', async (req: Request, res: Response) => {
 
 // GET /api/v1/runs/:id - retrieve run
 runsRouter.get('/runs/:id', async (req: Request, res: Response) => {
+  const runId = String(req.params.id);
   res.json({
     success: true,
     data: {
-      id: req.params.id,
+      id: runId,
       status: RunStatus.PENDING,
       tasks: [],
     },
@@ -62,10 +63,11 @@ runsRouter.get('/runs/:id', async (req: Request, res: Response) => {
 
 // POST /api/v1/runs/:id/cancel - cancel run
 runsRouter.post('/runs/:id/cancel', async (req: Request, res: Response) => {
+  const runId = String(req.params.id);
   res.json({
     success: true,
     data: {
-      id: req.params.id,
+      id: runId,
       status: RunStatus.CANCELLED,
       cancelledAt: new Date().toISOString(),
     },
