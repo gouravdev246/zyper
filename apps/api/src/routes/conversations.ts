@@ -243,5 +243,3 @@ conversationsRouter.post('/conversations/:id/messages', async (req: Request, res
     }
   } finally {
     res.end();
-  }
-});
