@@ -408,6 +408,7 @@ async def stream_chat_and_tools(
     history: Optional[List[Dict[str, Any]]],
     req: Request,
     active_runs: Dict[str, Any],
+    model: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Orchestrates streaming chat with the configured LLM provider.
@@ -416,11 +417,11 @@ async def stream_chat_and_tools(
     # 1. Yield run.started
     yield f"data: {json.dumps({'type': 'run.started', 'runId': run_id, 'goal': goal})}\n\n"
 
-    # 2. Check if Nebius is configured as default provider or if Gemini is absent
-    provider = settings.DEFAULT_LLM_PROVIDER
+    # 2. Check if Nebius is requested by user or configured as default
+    provider = (model or settings.DEFAULT_LLM_PROVIDER).lower()
     has_nebius_key = bool(settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY"))
 
-    if provider == "nebius" or (has_nebius_key and not settings.GEMINI_API_KEY):
+    if provider in ("nebius", "gpt-oss", "gpt-oss-120b", "openai/gpt-oss-120b") or (has_nebius_key and not settings.GEMINI_API_KEY and provider != "gemini"):
         async for evt in stream_nebius_chat_and_tools(run_id, goal, history, req, active_runs):
             yield evt
         return

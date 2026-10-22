@@ -36,3 +36,8 @@
 - Implemented: Added first-class Nebius AI Token Factory support (`openai/gpt-oss-120b`) via official `openai` SDK (`AsyncOpenAI` with `base_url="https://api.tokenfactory.nebius.com/v1/"`), complete with OpenAI-format function declarations for Gmail and Google Calendar tools, streaming SSE token emission, and an automated zero-downtime fallback mechanism when Google Gemini hits free tier rate limits (HTTP 429).
 - Used: `openai` Python SDK (`AsyncOpenAI`), Nebius Token Factory, FastAPI, Pydantic Settings, and Server-Sent Events.
 - Verification: Tested direct chat completion and tool calling against Nebius API (successfully invoked `gmail_list_unread` and streamed markdown responses with 0 errors); Pytest suite in `services/orchestrator` passed 100%.
+
+## 8. AI Model Selection UI & Automatic Approval Execution
+- Implemented: Added interactive AI Model Selector in the desktop application header and chat status bar, enabling the user to switch between Nebius (GPT-OSS 120B), Google Gemini (2.5 Flash), OpenAI (GPT-4o), and Anthropic (Claude 3.7). Fixed approval decision workflow (`POST /api/v1/approvals/:id/decision`) to immediately execute the approved tool action (`toolExecutionService.execute()`) and robustly format date/dateTime parameters for Google Calendar API so events are saved directly to the connected Google Calendar upon approval.
+- Used: React 19, Tailwind CSS, Express, Google Calendar API v3, Vitest.
+- Verification: Verified approval flow in `calendar.test.ts` (asserting `status: 'APPROVED'` and `execution.status: 'SUCCESS'`); full build checks in `@zyper/desktop` and `@zyper/api` passed with 0 errors.

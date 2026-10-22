@@ -18,6 +18,7 @@ class RunCreateRequest(BaseModel):
     goal: str
     conversation_id: Optional[str] = None
     run_id: Optional[str] = None
+    model: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     history: Optional[List[Dict[str, Any]]] = None
     tools: Optional[List[Dict[str, Any]]] = None
@@ -74,6 +75,7 @@ async def stream_run(request: RunCreateRequest, req: Request):
             history=request.history,
             req=req,
             active_runs=active_runs,
+            model=request.model,
         ),
         media_type="text/event-stream",
         headers={

@@ -14,6 +14,7 @@ const createConversationSchema = z.object({
 
 const postMessageSchema = z.object({
   content: z.string().min(1, 'Message content cannot be empty'),
+  model: z.string().optional(),
 });
 
 // GET /api/v1/conversations - list conversations
@@ -110,7 +111,7 @@ conversationsRouter.post('/conversations/:id/messages', async (req: Request, res
     return;
   }
 
-  const { content } = parseResult.data;
+  const { content, model } = parseResult.data;
 
   // 1. Persist user message
   const userMessage = await conversationService.addMessage(conversationId, 'user', content);
@@ -159,6 +160,7 @@ conversationsRouter.post('/conversations/:id/messages', async (req: Request, res
         conversation_id: conversationId,
         run_id: run.id,
         history,
+        model,
       }),
       signal: abortController.signal,
     }).catch(() => null);

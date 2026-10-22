@@ -419,14 +419,22 @@ export class CalendarService {
       try {
         const calendar = google.calendar({ version: 'v3', auth });
 
+        const isDateOnly = (val: string) => /^\d{4}-\d{2}-\d{2}$/.test(val.trim());
+        const startDate = isDateOnly(eventData.start)
+          ? { date: eventData.start.trim() }
+          : { dateTime: new Date(eventData.start).toISOString() };
+        const endDate = isDateOnly(eventData.end)
+          ? { date: eventData.end.trim() }
+          : { dateTime: new Date(eventData.end).toISOString() };
+
         const created = await calendar.events.insert({
           calendarId: 'primary',
           requestBody: {
             summary: eventData.summary,
             description: eventData.description,
             location: eventData.location,
-            start: { dateTime: eventData.start },
-            end: { dateTime: eventData.end },
+            start: startDate,
+            end: endDate,
             attendees: eventData.attendees?.map((email) => ({ email })),
           },
         });
@@ -435,17 +443,18 @@ export class CalendarService {
           id: created.data.id || `cal-evt-${crypto.randomUUID()}`,
           summary: created.data.summary || eventData.summary,
           description: created.data.description || eventData.description,
-          start: created.data.start?.dateTime || eventData.start,
-          end: created.data.end?.dateTime || eventData.end,
+          start: created.data.start?.dateTime || created.data.start?.date || eventData.start,
+          end: created.data.end?.dateTime || created.data.end?.date || eventData.end,
           location: created.data.location || eventData.location,
           status: created.data.status || 'confirmed',
           attendees: eventData.attendees,
         };
 
         memoryCustomEvents.push(liveCreated);
+        logger.info(`Successfully created live Google Calendar event: ${liveCreated.id} (${liveCreated.summary})`);
         return liveCreated;
       } catch (err: unknown) {
-        logger.warn('Failed to insert live event on Google Calendar, storing in local session memory');
+        logger.warn({ err }, 'Failed to insert live event on Google Calendar, storing in local session memory');
       }
     }
 

@@ -151,13 +151,16 @@ describe('Google Calendar Integration & Safe Tool Adapters', () => {
       const approval = res1.body.data.approval;
       expect(approval.toolId).toBe('calendar.create_event');
 
-      // 2. User approves the event booking
+      // 2. User approves the event booking (now immediately executes the authorized action)
       const decisionRes = await request(app)
         .post(`/api/v1/approvals/${approval.id}/decision`)
         .send({ decision: 'APPROVED' });
 
       expect(decisionRes.status).toBe(200);
       expect(decisionRes.body.data.status).toBe('APPROVED');
+      expect(decisionRes.body.data.execution).toBeDefined();
+      expect(decisionRes.body.data.execution.status).toBe('SUCCESS');
+      expect(decisionRes.body.data.execution.output.summary).toBe(eventPayload.summary);
 
       // 3. Authorized execution succeeds
       const res2 = await request(app)

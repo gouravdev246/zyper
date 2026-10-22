@@ -60,6 +60,13 @@ interface ConnectionItem {
 
 const API_BASE = 'http://localhost:4000/api/v1';
 
+export const AVAILABLE_MODELS = [
+  { id: 'nebius', name: 'Nebius (GPT-OSS 120B)', badge: 'Recommended', icon: '⚡' },
+  { id: 'gemini', name: 'Google Gemini (2.5 Flash)', badge: 'Multimodal', icon: '✨' },
+  { id: 'openai', name: 'OpenAI (GPT-4o)', badge: 'Cloud API', icon: '🧠' },
+  { id: 'anthropic', name: 'Anthropic (Claude 3.7)', badge: 'Reasoning', icon: '🎯' },
+];
+
 export const App: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -67,6 +74,7 @@ export const App: React.FC = () => {
   const [inputPrompt, setInputPrompt] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('nebius');
 
   const [apiStatus, setApiStatus] = useState<'online' | 'offline' | 'checking'>('checking');
   const [activeTab, setActiveTab] = useState<'chat' | 'approvals' | 'tasks' | 'services' | 'connections'>('chat');
@@ -341,7 +349,7 @@ export const App: React.FC = () => {
       const res = await fetch(`${API_BASE}/conversations/${targetConvoId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: currentPrompt }),
+        body: JSON.stringify({ content: currentPrompt, model: selectedModel }),
         signal: controller.signal,
       });
 
@@ -437,6 +445,20 @@ export const App: React.FC = () => {
         setPendingApprovals((prev) =>
           prev.map((item) => (item.id === id ? { ...item, status: decision } : item))
         );
+
+        if (decision === 'APPROVED' && data.data?.execution) {
+          const exec = data.data.execution;
+          const statusText =
+            exec.status === 'SUCCESS'
+              ? '✅ Action executed successfully! Event has been added to your calendar.'
+              : `⚠️ Execution notice: ${exec.error || 'Failed to complete action'}`;
+          const execMsg: Message = {
+            id: `sys-${Date.now()}`,
+            role: 'system',
+            content: `**Action Authorization Confirmed**: Tool \`${data.data.toolId}\`\n\n${statusText}`,
+          };
+          setMessages((prev) => [...prev, execMsg]);
+        }
       }
     } catch {
       // optimistic fallback
@@ -605,6 +627,23 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* AI Model Selector */}
+            <div className="flex items-center gap-2 bg-[#121826] border border-white/10 rounded-lg px-2.5 py-1 text-xs">
+              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-slate-400 font-medium">Model:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-transparent text-slate-200 font-semibold focus:outline-none cursor-pointer pr-1"
+              >
+                {AVAILABLE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id} className="bg-[#0d111a] text-slate-200">
+                    {m.icon} {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               onClick={() => {
                 checkHealth();
@@ -647,6 +686,15 @@ export const App: React.FC = () => {
 
               {/* Input Dock */}
               <div className="p-4 bg-[#0d111a]/60 border-t border-white/10 backdrop-blur-md">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 px-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Model: <strong className="text-slate-300 font-semibold">{AVAILABLE_MODELS.find((m) => m.id === selectedModel)?.name}</strong>
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Policy Engine: Consequential Safeguards Active
+                  </span>
+                </div>
                 <form onSubmit={handleSendMessage} className="flex items-center gap-2 bg-[#07090e] border border-white/10 rounded-xl px-3 py-1.5 focus-within:border-indigo-500 transition-colors">
                   <input
                     type="text"
