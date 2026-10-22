@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ToolCategory, ToolContract } from '@zyper/shared';
 import { gmailService } from '../services/gmail.service.js';
 import { calendarService } from '../services/calendar.service.js';
+import { windowsCompanionService, MediaAction } from '../services/windows-companion.service.js';
 
 export interface ExecutableTool {
   contract: ToolContract;
@@ -282,31 +283,96 @@ class ToolRegistry {
       },
     });
 
-    // 6. app.open (PREPARATORY / Local)
-    this.register({
+    // 7. app.open (PREPARATORY / Local)
+    const appOpenTool: ExecutableTool = {
       contract: {
         id: 'app.open',
         name: 'Open Application',
-        description: 'Open an authorized application on the Windows machine.',
+        description: 'Open an authorized application on the Windows machine (notepad, calculator, vscode, terminal, browser, explorer, spotify).',
         version: '1.0.0',
         category: ToolCategory.PREPARATORY,
         requiredScopes: ['desktop:app:launch'],
-        inputSchema: { appId: 'string (vscode, chrome, notepad, spotify)' },
-        outputSchema: { success: 'boolean', appId: 'string', launchedAt: 'string' },
+        inputSchema: { appId: 'string (notepad, calculator, vscode, terminal, browser, explorer, spotify)' },
+        outputSchema: { success: 'boolean', appId: 'string', appName: 'string', status: 'string', launchedAt: 'string' },
+        requiresApprovalByDefault: false,
+        timeoutMs: 8000,
+      },
+      inputValidator: z.object({
+        appId: z.enum(['notepad', 'calculator', 'vscode', 'terminal', 'browser', 'explorer', 'spotify']),
+      }),
+      execute: async ({ appId }) => {
+        return await windowsCompanionService.launchApp(appId);
+      },
+    };
+    this.register(appOpenTool);
+    this.register({
+      ...appOpenTool,
+      contract: { ...appOpenTool.contract, id: 'desktop.app_launch' },
+    });
+
+    // 8. media.control (PREPARATORY / Local)
+    const mediaControlTool: ExecutableTool = {
+      contract: {
+        id: 'media.control',
+        name: 'Media Playback & Volume Control',
+        description: 'Control basic Windows audio playback and volume (play_pause, next_track, prev_track, volume_up, volume_down, mute).',
+        version: '1.0.0',
+        category: ToolCategory.PREPARATORY,
+        requiredScopes: ['desktop:media:control'],
+        inputSchema: { action: 'string (play_pause, next_track, prev_track, volume_up, volume_down, mute)' },
+        outputSchema: { success: 'boolean', action: 'string', status: 'string', executedAt: 'string' },
         requiresApprovalByDefault: false,
         timeoutMs: 5000,
       },
       inputValidator: z.object({
-        appId: z.enum(['vscode', 'chrome', 'notepad', 'spotify']),
+        action: z.enum(['play_pause', 'next_track', 'prev_track', 'volume_up', 'volume_down', 'mute']),
       }),
-      execute: async ({ appId }) => {
-        return {
-          success: true,
-          appId,
-          status: 'LAUNCHED',
-          launchedAt: new Date().toISOString(),
-        };
+      execute: async ({ action }) => {
+        return await windowsCompanionService.controlMedia(action as MediaAction);
       },
+    };
+    this.register(mediaControlTool);
+    this.register({
+      ...mediaControlTool,
+      contract: { ...mediaControlTool.contract, id: 'desktop.media_control' },
+    });
+
+    // 9. files.search (READ_ONLY / Local)
+    const filesSearchTool: ExecutableTool = {
+      contract: {
+        id: 'files.search',
+        name: 'Search Approved Local Folders',
+        description: 'Search for files by name/extension within user-approved folders (documents, downloads, desktop, workspace) with directory traversal protection.',
+        version: '1.0.0',
+        category: ToolCategory.READ_ONLY,
+        requiredScopes: ['desktop:fs:search'],
+        inputSchema: {
+          folderId: 'string (documents, downloads, desktop, workspace)',
+          query: 'string',
+          maxResults: 'number (optional, default: 10)',
+        },
+        outputSchema: {
+          totalFound: 'number',
+          folderId: 'string',
+          folderPath: 'string',
+          results: 'Array<{ name, path, isDirectory, sizeBytes, modifiedAt }>',
+        },
+        requiresApprovalByDefault: false,
+        timeoutMs: 10000,
+      },
+      inputValidator: z.object({
+        folderId: z.enum(['documents', 'downloads', 'desktop', 'workspace']),
+        query: z.string().min(1, 'Search query cannot be empty'),
+        maxResults: z.number().int().min(1).max(50).default(10),
+      }),
+      execute: async ({ folderId, query, maxResults }) => {
+        return (await windowsCompanionService.searchApprovedFolder(folderId, query, maxResults)) as unknown as Record<string, unknown>;
+      },
+    };
+    this.register(filesSearchTool);
+    this.register({
+      ...filesSearchTool,
+      contract: { ...filesSearchTool.contract, id: 'desktop.fs_search' },
     });
   }
 }
