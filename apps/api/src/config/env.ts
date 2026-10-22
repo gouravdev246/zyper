@@ -1,14 +1,13 @@
 import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 // Load root .env (monorepo root) first, then local package .env, then process.cwd() fallback
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+dotenv.config({ path: path.resolve(currentDir, '../../../../.env') });
+dotenv.config({ path: path.resolve(currentDir, '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config();
 
 const envSchema = z.object({

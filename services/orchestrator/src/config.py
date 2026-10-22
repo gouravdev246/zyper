@@ -3,7 +3,7 @@ from typing import Literal
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="../../.env",
+        env_file=[".env", "../.env", "../../.env"],
         env_file_encoding="utf-8",
         extra="ignore"
     )
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     PORT: int = 8000
     INTERNAL_SERVICE_KEY: str = "development_internal_service_key_zyper"
+    API_BASE_URL: str = "http://localhost:4000/api/v1"
 
     # Multi-provider LLM Configuration
     DEFAULT_LLM_PROVIDER: Literal["gemini", "openai", "anthropic"] = "gemini"

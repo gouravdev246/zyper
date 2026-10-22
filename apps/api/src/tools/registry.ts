@@ -183,7 +183,7 @@ class ToolRegistry {
         inputSchema: { maxResults: 'number (optional)' },
         outputSchema: { totalUnread: 'number', messages: 'Array<{ id, from, subject, snippet, date }>' },
         requiresApprovalByDefault: false,
-        timeoutMs: 5000,
+        timeoutMs: 15000,
       },
       inputValidator: z.object({
         maxResults: z.number().int().min(1).max(50).default(10),
@@ -209,7 +209,7 @@ class ToolRegistry {
         inputSchema: { messageId: 'string' },
         outputSchema: { message: 'GmailMessageDetail' },
         requiresApprovalByDefault: false,
-        timeoutMs: 5000,
+        timeoutMs: 15000,
       },
       inputValidator: z.object({
         messageId: z.string().min(1, 'Message ID is required'),

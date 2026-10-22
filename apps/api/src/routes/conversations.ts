@@ -139,6 +139,16 @@ conversationsRouter.post('/conversations/:id/messages', async (req: Request, res
   });
 
   try {
+    // Retrieve previous messages for conversational context
+    const previousMessages = await conversationService.getMessages(conversationId);
+    const history = previousMessages
+      .filter((m) => m.id !== userMessage.id)
+      .slice(-10)
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
     // Attempt to call Python Orchestrator streaming endpoint
     const orchestratorStreamUrl = `${env.INTERNAL_ORCHESTRATOR_URL}/runs/stream`;
     const orchResponse = await fetch(orchestratorStreamUrl, {
@@ -147,6 +157,8 @@ conversationsRouter.post('/conversations/:id/messages', async (req: Request, res
       body: JSON.stringify({
         goal: content,
         conversation_id: conversationId,
+        run_id: run.id,
+        history,
       }),
       signal: abortController.signal,
     }).catch(() => null);
