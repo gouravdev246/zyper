@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { ApprovalStatus } from '@zyper/shared';
+import { policyService } from '../services/policy.service.js';
 
 export const approvalsRouter = Router();
 
@@ -11,14 +11,16 @@ const approvalDecisionSchema = z.object({
 
 // GET /api/v1/approvals - list pending approvals
 approvalsRouter.get('/approvals', async (_req: Request, res: Response) => {
+  const pending = policyService.listPendingApprovals();
   res.json({
     success: true,
-    data: [],
+    data: pending,
   });
 });
 
 // POST /api/v1/approvals/:id/decision - approve or reject
 approvalsRouter.post('/approvals/:id/decision', async (req: Request, res: Response) => {
+  const approvalId = String(req.params.id);
   const parseResult = approvalDecisionSchema.safeParse(req.body);
   if (!parseResult.success) {
     res.status(400).json({
@@ -33,12 +35,20 @@ approvalsRouter.post('/approvals/:id/decision', async (req: Request, res: Respon
   }
 
   const { decision } = parseResult.data;
+  const updated = await policyService.recordDecision(approvalId, decision);
+  if (!updated) {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: 'NOT_FOUND',
+        message: `Approval request ${approvalId} not found`,
+      },
+    });
+    return;
+  }
+
   res.json({
     success: true,
-    data: {
-      id: req.params.id,
-      status: decision === 'APPROVED' ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED,
-      decidedAt: new Date().toISOString(),
-    },
+    data: updated,
   });
 });

@@ -49,6 +49,35 @@ export interface ToolContract {
   timeoutMs: number;
 }
 
+export interface ToolExecutionRequest {
+  toolId: string;
+  input: Record<string, unknown>;
+  runId?: string;
+  taskId?: string;
+  approvalId?: string;
+  idempotencyKey?: string;
+}
+
+export interface ToolExecutionResult {
+  toolId: string;
+  status: 'SUCCESS' | 'FAILED' | 'REQUIRES_APPROVAL' | 'REJECTED';
+  output?: Record<string, unknown>;
+  error?: string;
+  approval?: ActionApproval;
+  durationMs: number;
+  executedAt: string;
+}
+
+export enum AuditEventType {
+  AUTH = 'AUTH',
+  PERMISSION_CHECK = 'PERMISSION_CHECK',
+  APPROVAL_REQUIRED = 'APPROVAL_REQUIRED',
+  APPROVAL_DECISION = 'APPROVAL_DECISION',
+  TOOL_EXECUTION = 'TOOL_EXECUTION',
+  TOOL_REJECTED = 'TOOL_REJECTED',
+  REVOCATION = 'REVOCATION',
+}
+
 // ==========================================
 // Approvals & Action Authorization
 // ==========================================
