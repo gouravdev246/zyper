@@ -46,8 +46,11 @@ class ToolRegistry {
         timeoutMs: 12000,
       },
       inputValidator: z.object({
-        query: z.string().min(1, 'Query cannot be empty'),
-        maxResults: z.number().int().min(1).max(20).default(5),
+        query: z
+          .string()
+          .transform((v) => v.replace(/[\[\]]/g, '').trim())
+          .pipe(z.string().min(1, 'Query cannot be empty')),
+        maxResults: z.coerce.number().int().min(1).max(20).default(5),
       }),
       execute: async ({ query, maxResults }) => {
         const result = await webSearchService.search(query, maxResults);
@@ -70,7 +73,16 @@ class ToolRegistry {
         timeoutMs: 8000,
       },
       inputValidator: z.object({
-        url: z.string().url('A valid http or https URL is required'),
+        url: z
+          .string()
+          .transform((v) => {
+            let clean = v.replace(/[\[\]]/g, '').trim();
+            if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+              clean = `https://${clean}`;
+            }
+            return clean;
+          })
+          .pipe(z.string().url('A valid http or https URL is required')),
       }),
       execute: async ({ url }) => {
         return (await webSearchService.openUrlInBrowser(url)) as unknown as Record<string, unknown>;
@@ -97,7 +109,10 @@ class ToolRegistry {
         timeoutMs: 10000,
       },
       inputValidator: z.object({
-        query: z.string().min(1, 'Song or video query cannot be empty'),
+        query: z
+          .string()
+          .transform((v) => v.replace(/[\[\]]/g, '').trim())
+          .pipe(z.string().min(1, 'Song or video query cannot be empty')),
       }),
       execute: async ({ query }) => {
         return (await webSearchService.playYouTube(query)) as unknown as Record<string, unknown>;

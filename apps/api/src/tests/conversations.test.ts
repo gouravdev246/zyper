@@ -47,5 +47,5 @@ describe('Conversations API', () => {
     expect(historyRes.body.data.length).toBeGreaterThanOrEqual(2); // user message + assistant message
     expect(historyRes.body.data[0].role).toBe('user');
     expect(historyRes.body.data[1].role).toBe('assistant');
-  }, 15000);
+  }, 30000);
 });

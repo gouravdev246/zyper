@@ -10,10 +10,11 @@ Registry, and automated fallback when provider rate limits are encountered.
 """
 
 import os
+import re
 import json
 import logging
 import httpx
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional, Tuple, AsyncGenerator
 from fastapi import Request
 from openai import AsyncOpenAI, OpenAI
 from src.config import settings
@@ -32,16 +33,17 @@ Available tools include:
 - Windows Desktop: opening permitted applications (notepad, calculator, vscode, terminal, browser, explorer, spotify), controlling media playback (play_pause, next_track, prev_track, volume_up, volume_down, mute), and searching local files in approved folders (documents, downloads, desktop, workspace).
 
 Tool Calling Rules:
-1. When the user asks to "Open YouTube and play [song/video]" or play any music/video, IMMEDIATELY call `browser_play_youtube` with the song or video title query. Do not ask for confirmation; open and play it directly.
-2. When the user asks to search the web, lookup information on internet, or find latest news, IMMEDIATELY call `web_search` with the query. Once results return, summarize findings accurately with sources.
-3. When the user asks to open a specific website or URL in their browser, call `browser_open_url` with the target URL.
+1. When the user asks any question requiring current, real-time, or external facts (e.g. current time, date, weather, news, sports scores, live information, web research), IMMEDIATELY call `web_search` with the query keywords. When search results return, synthesize and provide a direct answer. Do NOT use `browser_open_url` for informational questions.
+2. When the user asks to "Open YouTube and play [song/video]" or play any music/video, IMMEDIATELY call `browser_play_youtube` with the song or video title query. Do not ask for confirmation; open and play it directly.
+3. When the user explicitly asks to open a specific website or URL in their browser (e.g. "open github.com", "open youtube", "open this link in browser"), call `browser_open_url` with the target URL.
 4. When the user asks to check, list, read, or summarize unread emails, IMMEDIATELY call `gmail_list_unread`.
 5. When the user asks to check their calendar or schedule, IMMEDIATELY call `calendar_list_events`.
 6. When the user asks to open an app (e.g. "open notepad", "open calculator", "launch vs code"), call `app_open` with the appropriate appId.
 7. When the user asks to control media or audio (e.g. "mute volume", "pause music", "turn volume up"), call `media_control` with the corresponding action.
 8. When the user asks to find or search files in a folder, call `files_search` with the target folderId (documents, downloads, desktop, workspace) and search query.
 9. For consequential actions (like sending an email or booking a calendar event), make sure you have the required parameters before calling the tool.
-10. Keep answers helpful, professional, polite, and well-structured with markdown.
+10. Always invoke tools directly using the tool calling mechanism. Do NOT print raw tool tags like `<tool_call>`, `<invoke>`, or `<]minimax[>` in your conversational text.
+11. Keep answers helpful, professional, polite, and well-structured with markdown.
 """.strip()
 
 
@@ -347,6 +349,129 @@ async def execute_tool_via_api(tool_id: str, tool_input: Dict[str, Any], run_id:
         }
 
 
+def parse_inline_tool_calls(text: str) -> Tuple[List[Dict[str, Any]], str]:
+    """
+    Extracts tool calls that were generated as inline XML/text markup
+    (such as MiniMax <]minimax[>[<tool_call>...<invoke name="...">...</invoke>]
+    or standard <tool_call><invoke name="...">...</invoke></tool_call>).
+    Returns (tool_calls, clean_visible_text).
+    """
+    tool_calls: List[Dict[str, Any]] = []
+    cleaned = text.replace("<]minimax[>", "")
+
+    # Regex to find <invoke name="...">...</invoke> (optionally enclosed in brackets)
+    invoke_pattern = re.compile(
+        r'\[?<invoke\s+name=["\']([^"\']+)["\']>([\s\S]*?)<\/invoke>\]?',
+        re.IGNORECASE,
+    )
+
+    for match in invoke_pattern.finditer(cleaned):
+        fn_name = match.group(1).strip()
+        body = match.group(2).replace("<]minimax[>", "").strip()
+        args: Dict[str, Any] = {}
+
+        # Look for XML-style parameter tags <param_name>value</param_name>
+        arg_pattern = re.compile(r'\[?<([a-zA-Z0-9_]+)>([\s\S]*?)<\/\1>\]?')
+        for arg_m in arg_pattern.finditer(body):
+            param_name = arg_m.group(1)
+            raw_val = arg_m.group(2).strip()
+            # Clean stray brackets or minimax markup inside the parameter
+            clean_val = raw_val.replace("<]minimax[>", "").replace("[", "").replace("]", "").strip()
+            args[param_name] = clean_val
+
+        # If no XML tags matched, check if body is raw JSON
+        if not args and body.startswith("{") and body.endswith("}"):
+            try:
+                args = json.loads(body)
+            except Exception:
+                pass
+
+        tool_calls.append({
+            "id": f"call_inline_{len(tool_calls)}",
+            "name": fn_name,
+            "arguments": json.dumps(args),
+        })
+
+    # Strip out all tool call markup and minimax markers from visible text
+    visible_text = re.sub(r'\[?<tool_call>[\s\S]*?<\/tool_call>\]?', '', cleaned, flags=re.IGNORECASE)
+    visible_text = re.sub(r'\[?<invoke[\s\S]*?<\/invoke>\]?', '', visible_text, flags=re.IGNORECASE)
+    visible_text = visible_text.replace('<]minimax[>', '').strip()
+    visible_text = re.sub(r'\]+$', '', visible_text).strip()
+
+    return tool_calls, visible_text
+
+
+def format_tool_output_fallback(tool_id: str, output_data: Dict[str, Any]) -> str:
+    """
+    Generates a structured, human-readable summary of tool output
+    if the LLM follow-up synthesis fails or is unavailable.
+    """
+    if tool_id in ("web.search", "web_search"):
+        results = output_data.get("results", [])
+        if not results:
+            return "\n\nNo web search results were found for your query."
+        lines = ["\n\n**Web Search Results:**\n"]
+        for r in results[:5]:
+            title = r.get("title", "Result")
+            url = r.get("url", "")
+            snippet = r.get("snippet", "")
+            lines.append(f"- [{title}]({url}): {snippet}")
+        return "\n".join(lines) + "\n"
+
+    elif tool_id in ("browser.play_youtube", "browser_play_youtube", "youtube.play", "youtube_play"):
+        video_title = output_data.get("videoTitle") or output_data.get("query", "video")
+        watch_url = output_data.get("watchUrl", "")
+        return f"\n\nNow playing **{video_title}** on YouTube: [{watch_url}]({watch_url})\n"
+
+    elif tool_id in ("browser.open_url", "browser_open_url", "web.open_url", "web_open_url"):
+        opened_url = output_data.get("url", "")
+        return f"\n\nOpened **{opened_url}** in your default web browser.\n"
+
+    elif tool_id in ("gmail.list_unread", "gmail_list_unread"):
+        msgs = output_data.get("messages", [])
+        if not msgs:
+            return "\n\nYou have no unread emails in your inbox."
+        lines = ["\n\nHere are your recent unread emails:\n"]
+        for m in msgs[:5]:
+            from_addr = m.get("from", "Unknown")
+            subj = m.get("subject", "(No subject)")
+            lines.append(f"- **{from_addr}**: {subj}")
+        return "\n".join(lines) + "\n"
+
+    elif tool_id in ("calendar.list_events", "calendar_list_events"):
+        events = output_data.get("events", [])
+        if not events:
+            return "\n\nYou have no upcoming events scheduled."
+        lines = ["\n\nHere are your upcoming calendar events:\n"]
+        for ev in events[:5]:
+            summary = ev.get("summary", "Event")
+            start = ev.get("start", "")
+            lines.append(f"- **{summary}** at {start}")
+        return "\n".join(lines) + "\n"
+
+    elif tool_id in ("app.open", "app_open", "desktop.app_launch"):
+        app_name = output_data.get("appName") or output_data.get("appId", "application")
+        return f"\n\nSuccessfully launched **{app_name}** on your Windows desktop.\n"
+
+    elif tool_id in ("media.control", "media_control", "desktop.media_control"):
+        action = output_data.get("action", "action")
+        return f"\n\nExecuted Windows media action: `{action}`.\n"
+
+    elif tool_id in ("files.search", "files_search", "desktop.fs_search"):
+        results = output_data.get("results", [])
+        folder = output_data.get("folderId", "folder")
+        if not results:
+            return f"\n\nNo files found matching your search in {folder}."
+        lines = [f"\n\nFound {len(results)} file(s) in {folder}:\n"]
+        for f in results[:5]:
+            name = f.get("name", "")
+            size = f.get("sizeBytes", 0)
+            lines.append(f"- `{name}` ({size} bytes)")
+        return "\n".join(lines) + "\n"
+
+    return f"\n\nTool `{tool_id}` executed successfully."
+
+
 async def stream_nebius_chat_and_tools(
     run_id: str,
     goal: str,
@@ -356,6 +481,7 @@ async def stream_nebius_chat_and_tools(
 ) -> AsyncGenerator[str, None]:
     """
     Streams completions from Nebius AI (OpenAI-compatible Token Factory).
+    Detects and executes both standard OpenAI delta tool calls and inline model tool calls.
     """
     api_key = settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY")
     base_url = settings.NEBIUS_BASE_URL or os.environ.get("NEBIUS_BASE_URL") or "https://api.tokenfactory.nebius.com/v1/"
@@ -411,6 +537,10 @@ async def stream_nebius_chat_and_tools(
 
     tool_calls_list: List[Dict[str, Any]] = []
     current_tc = None
+    accumulated_content = ""
+    streamed_length = 0
+    in_tool_markup = False
+    MARKERS = ["<]minimax[>", "<tool_call", "<invoke", "[<tool_call"]
 
     async for chunk in response_stream:
         if active_runs.get(run_id, {}).get("cancelled") or await req.is_disconnected():
@@ -422,9 +552,42 @@ async def stream_nebius_chat_and_tools(
             continue
 
         delta = chunk.choices[0].delta
-        if delta.content:
-            yield f"data: {json.dumps({'type': 'token', 'content': delta.content})}\n\n"
 
+        # 1. Accumulate text content and safely filter out tool markup tokens
+        if delta.content:
+            accumulated_content += delta.content
+
+            if not in_tool_markup:
+                marker_indices = [
+                    accumulated_content.find(m) for m in MARKERS if accumulated_content.find(m) != -1
+                ]
+                if marker_indices:
+                    in_tool_markup = True
+                    first_marker_idx = min(marker_indices)
+                    safe_to_stream = accumulated_content[streamed_length:first_marker_idx].rstrip("] \n\r")
+                    if safe_to_stream:
+                        yield f"data: {json.dumps({'type': 'token', 'content': safe_to_stream})}\n\n"
+                    streamed_length = first_marker_idx
+                else:
+                    tail = accumulated_content[-15:]
+                    possible_split = -1
+                    for i, char in enumerate(tail):
+                        if char in ('<', '['):
+                            possible_split = len(accumulated_content) - 15 + i
+                            break
+
+                    if possible_split != -1 and possible_split > streamed_length:
+                        safe_text = accumulated_content[streamed_length:possible_split]
+                        if safe_text:
+                            yield f"data: {json.dumps({'type': 'token', 'content': safe_text})}\n\n"
+                            streamed_length = possible_split
+                    elif possible_split == -1:
+                        safe_text = accumulated_content[streamed_length:]
+                        if safe_text:
+                            yield f"data: {json.dumps({'type': 'token', 'content': safe_text})}\n\n"
+                            streamed_length = len(accumulated_content)
+
+        # 2. Accumulate standard OpenAI delta tool calls
         if delta.tool_calls:
             for tc in delta.tool_calls:
                 if tc.id or (tc.function and tc.function.name):
@@ -437,7 +600,19 @@ async def stream_nebius_chat_and_tools(
                 elif current_tc is not None and tc.function and tc.function.arguments:
                     current_tc["arguments"] += tc.function.arguments
 
-    # Process any accumulated tool calls
+    # If no standard tool calls were received, parse any inline XML/text tool calls
+    if not tool_calls_list and accumulated_content:
+        inline_tcs, _ = parse_inline_tool_calls(accumulated_content)
+        if inline_tcs:
+            tool_calls_list.extend(inline_tcs)
+
+    # If no tool calls were detected and no tool markup started, flush remaining text
+    if not tool_calls_list and not in_tool_markup and streamed_length < len(accumulated_content):
+        rem = accumulated_content[streamed_length:]
+        if rem:
+            yield f"data: {json.dumps({'type': 'token', 'content': rem})}\n\n"
+
+    # Process all detected tool calls
     for tc in tool_calls_list:
         fn_name = tc["name"]
         args_str = tc["arguments"]
@@ -493,16 +668,16 @@ async def stream_nebius_chat_and_tools(
                     if active_runs.get(run_id, {}).get("cancelled") or await req.is_disconnected():
                         return
                     if chunk.choices and chunk.choices[0].delta.content:
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk.choices[0].delta.content})}\n\n"
+                        c_text = chunk.choices[0].delta.content
+                        clean_c = c_text.replace("<]minimax[>", "")
+                        if "<tool_call" in clean_c or "<invoke" in clean_c:
+                            continue
+                        if clean_c:
+                            yield f"data: {json.dumps({'type': 'token', 'content': clean_c})}\n\n"
             except Exception as f_err:
                 logger.error(f"Nebius follow-up synthesis error: {f_err}")
-                msgs = output_data.get("messages", [])
-                if msgs:
-                    yield f"data: {json.dumps({'type': 'token', 'content': '\n\nHere are your recent unread emails:\n'})}\n\n"
-                    for m in msgs[:5]:
-                        from_addr = m.get("from", "Unknown")
-                        subj = m.get("subject", "(No subject)")
-                        yield f"data: {json.dumps({'type': 'token', 'content': f'- **{from_addr}**: {subj}\n'})}\n\n"
+                fallback_msg = format_tool_output_fallback(tool_id, output_data)
+                yield f"data: {json.dumps({'type': 'token', 'content': fallback_msg})}\n\n"
         else:
             err_message = tool_result.get("error", "Action was denied or failed")
             yield f"data: {json.dumps({'type': 'token', 'content': f'\\n\\n[Tool execution notice: {err_message}]'})}\n\n"
@@ -709,13 +884,8 @@ async def stream_chat_and_tools(
                             err_body = await follow_up_resp.aread()
                             err_msg = err_body.decode("utf-8", errors="replace")
                             logger.error(f"Gemini follow-up error {follow_up_resp.status_code}: {err_msg}")
-                            msgs = output_data.get("messages", [])
-                            if msgs:
-                                yield f"data: {json.dumps({'type': 'token', 'content': '\n\nHere are your recent unread emails:\n'})}\n\n"
-                                for m in msgs[:5]:
-                                    from_addr = m.get("from", "Unknown")
-                                    subj = m.get("subject", "(No subject)")
-                                    yield f"data: {json.dumps({'type': 'token', 'content': f'- **{from_addr}**: {subj}\n'})}\n\n"
+                            fallback_msg = format_tool_output_fallback(tool_id, output_data)
+                            yield f"data: {json.dumps({'type': 'token', 'content': fallback_msg})}\n\n"
             else:
                 err_message = tool_result.get("error", "Action was denied or failed")
                 yield f"data: {json.dumps({'type': 'token', 'content': f'\\n\\n[Tool execution notice: {err_message}]'})}\n\n"
