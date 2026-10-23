@@ -3,6 +3,7 @@ import { ToolCategory, ToolContract } from '@zyper/shared';
 import { gmailService } from '../services/gmail.service.js';
 import { calendarService } from '../services/calendar.service.js';
 import { windowsCompanionService, MediaAction } from '../services/windows-companion.service.js';
+import { webSearchService } from '../services/web-search.service.js';
 
 export interface ExecutableTool {
   contract: ToolContract;
@@ -34,32 +35,78 @@ class ToolRegistry {
     this.register({
       contract: {
         id: 'web.search',
-        name: 'Web Search',
-        description: 'Search the web for up-to-date information, documentation, and news.',
+        name: 'Live Web Search',
+        description: 'Search the live web for real-time information, documentation, news, and links without requiring API keys.',
         version: '1.0.0',
         category: ToolCategory.READ_ONLY,
         requiredScopes: ['search:read'],
-        inputSchema: { query: 'string', maxResults: 'number (optional)' },
-        outputSchema: { results: 'Array<{ title, url, snippet }>' },
+        inputSchema: { query: 'string', maxResults: 'number (optional, default: 5)' },
+        outputSchema: { query: 'string', totalFound: 'number', results: 'Array<{ title, url, snippet }>' },
         requiresApprovalByDefault: false,
-        timeoutMs: 5000,
+        timeoutMs: 12000,
       },
       inputValidator: z.object({
         query: z.string().min(1, 'Query cannot be empty'),
-        maxResults: z.number().int().min(1).max(10).default(5),
+        maxResults: z.number().int().min(1).max(20).default(5),
       }),
       execute: async ({ query, maxResults }) => {
-        return {
-          query,
-          results: [
-            {
-              title: `Search Result for: ${query}`,
-              url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
-              snippet: `Synthesized accurate web findings regarding ${query}.`,
-            },
-          ].slice(0, maxResults),
-        };
+        const result = await webSearchService.search(query, maxResults);
+        return result as unknown as Record<string, unknown>;
       },
+    });
+
+    // 1b. browser.open_url (PREPARATORY)
+    const browserOpenTool: ExecutableTool = {
+      contract: {
+        id: 'browser.open_url',
+        name: 'Open Web Page in Browser',
+        description: 'Open a web URL directly in the user default desktop browser (e.g. Chrome, Edge).',
+        version: '1.0.0',
+        category: ToolCategory.PREPARATORY,
+        requiredScopes: ['browser:navigate'],
+        inputSchema: { url: 'string (valid http/https URL)' },
+        outputSchema: { success: 'boolean', url: 'string', status: 'string', openedAt: 'string' },
+        requiresApprovalByDefault: false,
+        timeoutMs: 8000,
+      },
+      inputValidator: z.object({
+        url: z.string().url('A valid http or https URL is required'),
+      }),
+      execute: async ({ url }) => {
+        return (await webSearchService.openUrlInBrowser(url)) as unknown as Record<string, unknown>;
+      },
+    };
+    this.register(browserOpenTool);
+    this.register({
+      ...browserOpenTool,
+      contract: { ...browserOpenTool.contract, id: 'web.open_url' },
+    });
+
+    // 1c. browser.play_youtube (PREPARATORY)
+    const youtubePlayTool: ExecutableTool = {
+      contract: {
+        id: 'browser.play_youtube',
+        name: 'Open YouTube and Play Song',
+        description: 'Find a song, music video, or content on YouTube and immediately launch it in the web browser for instant playback.',
+        version: '1.0.0',
+        category: ToolCategory.PREPARATORY,
+        requiredScopes: ['browser:navigate', 'media:playback'],
+        inputSchema: { query: 'string (song name, artist, or video title)' },
+        outputSchema: { success: 'boolean', query: 'string', videoTitle: 'string', videoId: 'string', watchUrl: 'string', status: 'string' },
+        requiresApprovalByDefault: false,
+        timeoutMs: 10000,
+      },
+      inputValidator: z.object({
+        query: z.string().min(1, 'Song or video query cannot be empty'),
+      }),
+      execute: async ({ query }) => {
+        return (await webSearchService.playYouTube(query)) as unknown as Record<string, unknown>;
+      },
+    };
+    this.register(youtubePlayTool);
+    this.register({
+      ...youtubePlayTool,
+      contract: { ...youtubePlayTool.contract, id: 'youtube.play' },
     });
 
     // 2. calendar.list_events (READ_ONLY)

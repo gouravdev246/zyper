@@ -40,6 +40,13 @@ connectionsRouter.get('/connections', async (_req: Request, res: Response) => {
         description: 'Topic research, feed monitoring, and approved draft publishing.',
       },
       {
+        provider: 'web_browser',
+        name: 'Web Search & Browser Player',
+        status: 'CONNECTED',
+        scopes: ['search:read', 'browser:navigate', 'media:playback'],
+        description: 'Live DuckDuckGo web search, YouTube instant music video autoplay, and default browser URL launcher.',
+      },
+      {
         provider: 'windows_companion',
         name: 'Windows Local Companion',
         status: companionStatus.connected ? 'CONNECTED' : companionStatus.status === 'REVOKED' ? 'REVOKED' : 'DISCONNECTED',

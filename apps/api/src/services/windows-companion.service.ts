@@ -29,7 +29,7 @@ export const WHITELISTED_APPS: Record<string, WhitelistedApp> = {
   vscode: {
     id: 'vscode',
     name: 'Visual Studio Code',
-    executable: 'code.cmd',
+    executable: 'code',
     description: 'Code editor',
   },
   terminal: {
@@ -354,7 +354,7 @@ export class WindowsCompanionService {
       const child = spawn(appConfig.executable, appConfig.args || [], {
         detached: true,
         stdio: 'ignore',
-        shell: false,
+        shell: process.platform === 'win32',
       });
 
       child.unref();

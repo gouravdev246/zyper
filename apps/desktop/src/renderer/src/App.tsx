@@ -21,6 +21,8 @@ import {
   Share2,
   Laptop,
   ExternalLink,
+  Globe,
+  Play,
 } from 'lucide-react';
 import { ToolContract, ToolCategory } from '@zyper/shared';
 
@@ -64,7 +66,7 @@ interface ConnectionItem {
 const API_BASE = 'http://localhost:4000/api/v1';
 
 export const AVAILABLE_MODELS = [
-  { id: 'nebius', name: 'Nebius (GPT-OSS 120B)', badge: 'Recommended', icon: '⚡' },
+  { id: 'nebius', name: 'Nebius (MiniMaxAI/MiniMax-M3)', badge: 'Recommended', icon: '⚡' },
   { id: 'gemini', name: 'Google Gemini (2.5 Flash)', badge: 'Multimodal', icon: '✨' },
   { id: 'openai', name: 'OpenAI (GPT-4o)', badge: 'Cloud API', icon: '🧠' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.7)', badge: 'Reasoning', icon: '🎯' },
@@ -1186,6 +1188,59 @@ export const App: React.FC = () => {
                 <div className="pt-4 border-t border-white/5">
                   <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10 text-xs font-semibold transition-colors">
                     Configure X Integration (Phase 6)
+                  </button>
+                </div>
+              </div>
+
+              {/* Web Search & Browser Player Card */}
+              <div className="p-6 rounded-xl bg-slate-900/60 border border-white/10 space-y-4 hover:border-teal-500/30 transition-all flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                        <Globe className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold text-white">Web Search & YouTube Player</h4>
+                        <span className="text-[11px] text-slate-400">Live Web & Browser Automation</span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Active & Ready
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Live internet search without API keys, direct YouTube music & video autoplay in your default browser, and URL navigation.
+                  </p>
+                  <div className="pt-2">
+                    <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">Capabilities:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">web.search</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">browser.play_youtube</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">browser.open_url</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-white/5 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      setInputPrompt('Open YouTube and play Believer by Imagine Dragons');
+                      setActiveTab('chat');
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm shadow-teal-600/30"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Play Song on YouTube
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInputPrompt('Search the web for the latest advancements in AI models and summarize the key findings');
+                      setActiveTab('chat');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold transition-colors"
+                  >
+                    Search Web
                   </button>
                 </div>
               </div>

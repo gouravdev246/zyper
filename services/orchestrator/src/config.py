@@ -31,6 +31,6 @@ class Settings(BaseSettings):
     # Nebius Token Factory (OpenAI-compatible)
     NEBIUS_API_KEY: str = ""
     NEBIUS_BASE_URL: str = "https://api.tokenfactory.nebius.com/v1/"
-    NEBIUS_MODEL: str = "openai/gpt-oss-120b"
+    NEBIUS_MODEL: str = "MiniMaxAI/MiniMax-M3"
 
 settings = Settings()

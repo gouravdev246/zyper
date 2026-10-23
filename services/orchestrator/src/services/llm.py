@@ -26,18 +26,22 @@ You are Zyper, a Personal AI Operator and executive AI assistant.
 You assist the user by answering questions, executing tasks, and integrating with connected tools.
 
 Available tools include:
+- Web Search & Browser: live web search (`web_search`), opening web links in default browser (`browser_open_url`), and searching & playing songs/videos on YouTube (`browser_play_youtube`).
 - Gmail: listing unread messages, reading emails, preparing drafts, and sending emails.
 - Google Calendar: listing schedules, checking meeting conflicts, and scheduling events.
 - Windows Desktop: opening permitted applications (notepad, calculator, vscode, terminal, browser, explorer, spotify), controlling media playback (play_pause, next_track, prev_track, volume_up, volume_down, mute), and searching local files in approved folders (documents, downloads, desktop, workspace).
 
 Tool Calling Rules:
-1. When the user asks to check, list, read, or summarize unread emails, IMMEDIATELY call `gmail_list_unread`. Once the tool returns the emails, summarize them clearly for the user. Do not refuse to summarize or ask for confirmation first.
-2. When the user asks to check their calendar or schedule, IMMEDIATELY call `calendar_list_events`.
-3. When the user asks to open an app (e.g. "open notepad", "open calculator", "launch vs code"), call `app_open` with the appropriate appId.
-4. When the user asks to control media or audio (e.g. "mute volume", "pause music", "turn volume up"), call `media_control` with the corresponding action.
-5. When the user asks to find or search files in a folder, call `files_search` with the target folderId (documents, downloads, desktop, workspace) and search query.
-6. For consequential actions (like sending an email or booking a calendar event), make sure you have the required parameters before calling the tool.
-7. Keep answers helpful, professional, polite, and well-structured with markdown.
+1. When the user asks to "Open YouTube and play [song/video]" or play any music/video, IMMEDIATELY call `browser_play_youtube` with the song or video title query. Do not ask for confirmation; open and play it directly.
+2. When the user asks to search the web, lookup information on internet, or find latest news, IMMEDIATELY call `web_search` with the query. Once results return, summarize findings accurately with sources.
+3. When the user asks to open a specific website or URL in their browser, call `browser_open_url` with the target URL.
+4. When the user asks to check, list, read, or summarize unread emails, IMMEDIATELY call `gmail_list_unread`.
+5. When the user asks to check their calendar or schedule, IMMEDIATELY call `calendar_list_events`.
+6. When the user asks to open an app (e.g. "open notepad", "open calculator", "launch vs code"), call `app_open` with the appropriate appId.
+7. When the user asks to control media or audio (e.g. "mute volume", "pause music", "turn volume up"), call `media_control` with the corresponding action.
+8. When the user asks to find or search files in a folder, call `files_search` with the target folderId (documents, downloads, desktop, workspace) and search query.
+9. For consequential actions (like sending an email or booking a calendar event), make sure you have the required parameters before calling the tool.
+10. Keep answers helpful, professional, polite, and well-structured with markdown.
 """.strip()
 
 
@@ -200,6 +204,52 @@ def build_gemini_tools() -> List[Dict[str, Any]]:
                 "required": ["folderId", "query"],
             },
         },
+        {
+            "name": "web_search",
+            "description": "Search the live web for real-time information, documentation, news, and links without requiring API keys.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "query": {
+                        "type": "STRING",
+                        "description": "Search query keywords",
+                    },
+                    "maxResults": {
+                        "type": "INTEGER",
+                        "description": "Maximum number of search results (default: 5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "browser_open_url",
+            "description": "Open a web URL directly in the user's default desktop browser (e.g. Chrome, Edge).",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "url": {
+                        "type": "STRING",
+                        "description": "Full web URL starting with http:// or https://",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+        {
+            "name": "browser_play_youtube",
+            "description": "Search for a song, music video, or content on YouTube and immediately launch it in the web browser for instant autoplay.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "query": {
+                        "type": "STRING",
+                        "description": "Song name, artist, music, or video title to play on YouTube",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
     ]
 
 
@@ -257,6 +307,10 @@ def map_fn_to_tool_id(fn_name: str) -> str:
         "app_open": "app.open",
         "media_control": "media.control",
         "files_search": "files.search",
+        "web_search": "web.search",
+        "browser_open_url": "browser.open_url",
+        "browser_play_youtube": "browser.play_youtube",
+        "youtube_play": "browser.play_youtube",
     }
     return mapping.get(fn_name, fn_name.replace("_", "."))
 
@@ -305,7 +359,7 @@ async def stream_nebius_chat_and_tools(
     """
     api_key = settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY")
     base_url = settings.NEBIUS_BASE_URL or os.environ.get("NEBIUS_BASE_URL") or "https://api.tokenfactory.nebius.com/v1/"
-    model_name = settings.NEBIUS_MODEL or os.environ.get("NEBIUS_MODEL") or "openai/gpt-oss-120b"
+    model_name = settings.NEBIUS_MODEL or os.environ.get("NEBIUS_MODEL") or "MiniMaxAI/MiniMax-M3"
 
     if not api_key:
         yield f"data: {json.dumps({'type': 'token', 'content': 'Error: NEBIUS_API_KEY is not set in .env. Please configure it to enable Nebius AI.'})}\n\n"
@@ -478,7 +532,7 @@ async def stream_chat_and_tools(
     provider = (model or settings.DEFAULT_LLM_PROVIDER).lower()
     has_nebius_key = bool(settings.NEBIUS_API_KEY or os.environ.get("NEBIUS_API_KEY"))
 
-    if provider in ("nebius", "gpt-oss", "gpt-oss-120b", "openai/gpt-oss-120b") or (has_nebius_key and not settings.GEMINI_API_KEY and provider != "gemini"):
+    if provider in ("nebius", "gpt-oss", "gpt-oss-120b", "MiniMaxAI/MiniMax-M3") or (has_nebius_key and not settings.GEMINI_API_KEY and provider != "gemini"):
         async for evt in stream_nebius_chat_and_tools(run_id, goal, history, req, active_runs):
             yield evt
         return
